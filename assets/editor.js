@@ -39,6 +39,12 @@ function renderSettings(app, message) {
     ${C.TOKEN_HELP}
     <div class="ed-actions"><button class="ed-primary" type="button" data-act="save">保存して確認</button>${S.token ? '<button type="button" data-act="forget">この端末から消す</button>' : ''}</div>
     <p class="ed-status" role="status">${message || ''}</p>
+    ${S.token && C.key ? `<h2 class="ed-h ed-h2">閲覧用パスワードの変更</h2>
+    <p class="ed-note">今のパスワードは不要です（この端末がログイン中なので）。記事と画像をすべて新しいパスワードで暗号化し直します。ほかの端末では新しいパスワードでログインし直してください。</p>
+    <label class="ed-field"><span>新しいパスワード</span><input name="np1" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <label class="ed-field"><span>もう一度</span><input name="np2" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <div class="ed-actions"><button class="ed-primary" type="button" data-act="chpw">パスワードを変更</button></div>
+    <p class="ed-status ed-pwstatus" role="status"></p>` : ''}
   </section>`);
   el.querySelector('[name=repo]').value = S.repo;
   el.querySelector('[name=token]').value = S.token;
@@ -51,6 +57,21 @@ function renderSettings(app, message) {
       await C.gh('GET', `/git/ref/heads/${encodeURIComponent(s.branch)}`);
       if (location.hash === '#/write') renderIndex(app); else location.hash = '#/write';
     } catch (e) { status.textContent = C.apiErrorText(e); }
+  });
+  const chpw = el.querySelector('[data-act=chpw]');
+  if (chpw) chpw.addEventListener('click', async () => {
+    const st = el.querySelector('.ed-pwstatus');
+    const a = el.querySelector('[name=np1]').value, b = el.querySelector('[name=np2]').value;
+    if (a.length < 8) { st.textContent = '8文字以上にしてください。'; return; }
+    if (a !== b) { st.textContent = '2つのパスワードが一致しません。'; return; }
+    if (!confirm('閲覧用パスワードを変更します。新しいパスワードを控えましたか？')) return;
+    chpw.disabled = true;
+    try {
+      await C.changePassword(a, (t) => { st.textContent = t; });
+      el.querySelectorAll('[name=np1],[name=np2]').forEach(i => { i.value = ''; });
+      st.textContent = '変更しました。ほかの端末への反映には1〜2分かかります。';
+    } catch (e) { console.error(e); st.textContent = C.apiErrorText(e); }
+    chpw.disabled = false;
   });
   const forget = el.querySelector('[data-act=forget]');
   if (forget) forget.addEventListener('click', () => { C.saveEdSettings({ ...S, token: '' }); renderSettings(app, '消しました。'); });

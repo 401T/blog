@@ -56,10 +56,11 @@
     return pipe(new Uint8Array(p), new DecompressionStream('gzip'));
   }
   async function deriveKey(password, kdf) {
-    const base = await subtle.importKey('raw', te.encode(password.normalize('NFC')), 'PBKDF2', false, ['deriveBits']);
+    const base = await subtle.importKey('raw', te.encode(password.normalize(kdf.norm || 'NFC')), 'PBKDF2', false, ['deriveBits']);
     const raw = new Uint8Array(await subtle.deriveBits({ name: 'PBKDF2', hash: kdf.hash, iterations: kdf.iterations, salt: unb64(kdf.salt) }, base, 256));
     return { raw, key: await subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']) };
   }
+  const newKdf = () => ({ name: 'PBKDF2', hash: 'SHA-256', iterations: 600000, salt: b64(crypto.getRandomValues(new Uint8Array(16))), norm: 'NFKC' });
   const importRaw = (s) => subtle.importKey('raw', unb64(s), 'AES-GCM', false, ['encrypt', 'decrypt']);
   const sealJSON = (o, k) => seal(te.encode(JSON.stringify(o)), k);
   const unsealJSON = async (u8, k) => JSON.parse(td.decode(await unseal(u8, k)));
@@ -230,6 +231,22 @@
     });
   }
 
+  // 入力のゆれ（スマホでの先頭の自動大文字化，日本語入力による全角英数字，
+  // スマート句読点，前後の空白）があっても，決めたときと同じパスワードとして扱う
+  function passwordCandidates(pw) {
+    const toFull = (t) => t.replace(/[!-~]/g, c => String.fromCharCode(c.charCodeAt(0) + 0xFEE0)).replace(/ /g, '\u3000');
+    const smart = (t) => t.replace(/'/g, '\u2019').replace(/"/g, '\u201D').replace(/--/g, '\u2014').replace(/\.\.\./g, '\u2026');
+    const capFirst = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+    const lowFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+    const base = [pw, pw.trim(), pw.normalize('NFKC'), pw.normalize('NFKC').trim()];
+    const out = [];
+    for (const b of base) for (const f of [t => t, capFirst, lowFirst]) {
+      const x = f(b);
+      out.push(x, smart(x), toFull(x), x + ' ');
+    }
+    return Array.from(new Set(out)).filter(Boolean);
+  }
+
   function showLogin(message) {
     logoutBtn.hidden = true; writeLink.hidden = true;
     app.replaceChildren(document.getElementById('login').content.cloneNode(true));
@@ -242,14 +259,19 @@
       btn.disabled = true;
       msg.textContent = '確認しています…';
       try {
-        const { raw, key: k } = await deriveKey(form.password.value, meta.kdf);
-        index = await loadIndex(k);
-        key = k;
-        saveKey(raw, form.remember.checked);
+        const u8 = await readData('index.bin');
+        let found = null;
+        for (const cand of passwordCandidates(form.password.value)) {
+          const d = await deriveKey(cand, meta.kdf);
+          try { index = await unsealJSON(u8, d.key); found = d; break; } catch (e) { /* 次の候補 */ }
+        }
+        if (!found) throw new Error('wrong password');
+        key = found.key;
+        saveKey(found.raw, form.remember.checked);
         form.password.value = '';
         route();
       } catch (err) {
-        msg.textContent = err.status && err.status !== 404 ? '読み込みに失敗しました。' : 'パスワードが違います。';
+        msg.textContent = err.status === 404 ? 'サイトの更新が反映されていません。1〜2分待って再読み込みしてください。' : err.status ? '読み込みに失敗しました。' : 'パスワードが違います。';
         btn.disabled = false;
         form.password.select();
       }
@@ -265,8 +287,8 @@
     el.innerHTML = `
       <h2 class="ed-h">初期設定</h2>
       <p class="ed-note">このブログはまだ設定されていません。閲覧用のパスワードを決めてください。パスワードはどこにも送信されず，この画面の中で暗号の鍵に変換されます。</p>
-      <label class="ed-field"><span>閲覧用パスワード（12文字以上を推奨）</span><input name="pw1" type="password" autocomplete="new-password"></label>
-      <label class="ed-field"><span>もう一度</span><input name="pw2" type="password" autocomplete="new-password"></label>
+      <label class="ed-field"><span>閲覧用パスワード（12文字以上を推奨）</span><input name="pw1" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+      <label class="ed-field"><span>もう一度</span><input name="pw2" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
       <label class="ed-check"><input type="checkbox" name="show"><span>パスワードを表示する</span></label>
       <label class="ed-field"><span>リポジトリ</span><input name="repo" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="401T/blog"></label>
       <label class="ed-field"><span>GitHub のアクセストークン</span><input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
@@ -290,7 +312,7 @@
       try {
         try { await ghRaw('data/meta.json'); status.textContent = 'すでに設定済みです。再読み込みしてください。'; return; } catch (e) { if (e.status !== 404) throw e; }
         status.textContent = '鍵を作っています…';
-        const kdf = { name: 'PBKDF2', hash: 'SHA-256', iterations: 600000, salt: b64(crypto.getRandomValues(new Uint8Array(16))) };
+        const kdf = newKdf();
         const { raw, key: k } = await deriveKey(pw1, kdf);
         const site = randId(9);
         const m = { v: 2, site, kdf, macros: { '\\R': '\\mathbb{R}', '\\dd': '\\mathrm{d}' } };
@@ -379,10 +401,36 @@
       <li>Permissions → Repository permissions の <b>Contents</b> を「Read and write」にする。</li>
       <li>「Generate token」を押し，表示された github_pat_… をここに貼る。</li></ol></details>`;
 
+  async function changePassword(newPw, progress) {
+    const kdf = newKdf();
+    const { raw, key: nk } = await deriveKey(newPw, kdf);
+    const idx = await unsealJSON(await ghRaw('data/index.bin'), key);
+    const changes = [];
+    let n = 0;
+    for (const p of idx.posts) {
+      progress(`記事を暗号化し直しています（${++n}/${idx.posts.length}）…`);
+      const u8 = await unseal(await ghRaw(`data/p-${p.id}.bin`), key);
+      changes.push({ path: `data/p-${p.id}.bin`, data: await seal(u8, nk) });
+      const post = JSON.parse(td.decode(u8));
+      for (const id of imageIds(post.md)) {
+        try { changes.push({ path: `data/i-${id}.bin`, data: await seal(await unseal(await ghRaw(`data/i-${id}.bin`), key), nk) }); } catch (e) { if (e.status !== 404) throw e; }
+      }
+    }
+    const m = { ...meta, kdf };
+    changes.push({ path: 'data/index.bin', data: await sealJSON(idx, nk) });
+    changes.push({ path: 'data/meta.json', data: JSON.stringify(m) });
+    progress('保存しています…');
+    await commit('閲覧用パスワードを変更', changes);
+    meta = m; key = nk; index = idx;
+    postCache.clear();
+    forgetKey();
+    saveKey(raw, true);
+  }
+
   const CTX = {
     get meta() { return meta; }, get key() { return key; }, get index() { return index; }, set index(v) { index = v; },
     postCache, imgCache, gh, ghRaw, commit, seal, sealJSON, unsealJSON, loadIndex, loadPost, randId,
-    edSettings, saveEdSettings, normRepo, apiErrorText, TOKEN_HELP, renderArticleInto, imageIds, esc, fmtDate,
+    edSettings, saveEdSettings, normRepo, changePassword, apiErrorText, TOKEN_HELP, renderArticleInto, imageIds, esc, fmtDate,
   };
 
   logoutBtn.addEventListener('click', () => { forgetKey(); key = null; index = null; postCache.clear(); location.hash = '#/'; showLogin(); });

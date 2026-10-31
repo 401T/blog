@@ -193,3 +193,5 @@ header.site { border-bottom: 1px solid var(--rule); }
 .ed-help { margin: 0.5em 0 1em; font-size: 0.9em; }
 .ed-help summary { cursor: pointer; color: var(--link); }
 .ed-preview { font-family: var(--serif); font-size: var(--fs); line-height: var(--lf); }
+
+.ed-h2 { margin-top: 2em; padding-top: 1em; border-top: 1px solid var(--rule); }
