@@ -294,7 +294,13 @@ async function renderEditor(app, path) {
     if (b.dataset.tab === 'preview') {
       const pv = $('.ed-preview');
       pv.innerHTML = '<p class="ed-note">組版しています…</p>';
-      try { await C.renderArticleInto(pv, collect(), pending); } catch (e) { console.error(e); pv.innerHTML = '<p class="error">プレビューを作れませんでした。</p>'; }
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('20秒たっても終わりませんでした')), 20000));
+      try { await Promise.race([C.renderArticleInto(pv, collect(), pending), timeout]); }
+      catch (e) {
+        console.error(e);
+        pv.innerHTML = '<p class="error">プレビューを作れませんでした。もう一度「プレビュー」を押してください。続く場合は下の文字を送ってください。</p><pre class="ed-preview-err"></pre>';
+        pv.querySelector('.ed-preview-err').textContent = String((e && (e.stack || e.message)) || e).slice(0, 600) + '\n' + navigator.userAgent;
+      }
     }
   });
 

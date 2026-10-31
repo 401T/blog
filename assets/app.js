@@ -198,7 +198,7 @@
   // ---------------------------------------------------------------- Markdown → 記事
   let mdLib = null;
   function markdownLib() {
-    if (!mdLib) mdLib = import('./markdown.js?v=' + V);
+    if (!mdLib) mdLib = import('./markdown.js?v=' + V).catch((e) => { mdLib = null; throw e; });
     return mdLib;
   }
   const imageIds = (md) => Array.from(new Set(Array.from(md.matchAll(/\]\(\s*img:([\w-]+\.[a-z]+)/g)).map(m => m[1])));
@@ -219,8 +219,8 @@
     const env = { file: '' };
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
-    const meta2 = [post.date ? `<time class="num" datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time>` : '', ...(post.tags || []).map(t => `<span>${esc(t)}</span>`), post.draft ? '<span>下書き</span>' : ''].filter(Boolean).join('<i aria-hidden="true">/</i>');
-    art.innerHTML = `<div class="post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${meta2 ? `<p class="post-meta no-jl">${meta2}</p>` : ''}<span class="shapes" aria-hidden="true"><i class="c"></i><i class="s"></i><i class="t"></i></span></header><div class="post-body">${html}</div></div>`;
+    const band = (post.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (post.draft ? '<span class="draft">下書き</span>' : '');
+    art.innerHTML = `<div class="board post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time></p>` : ''}</header><div class="post-band no-jl">${band}</div><div class="post-body">${html}</div></div>`;
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
     await Promise.all(Array.from(art.querySelectorAll('img')).map(img => img.decode().catch(() => {})));
@@ -238,16 +238,15 @@
   async function typeset(root) {
     root.classList.add('pending');
     const text = root.textContent;
-    const fams = ['400 1em "Noto Serif JP"', '400 1em "Noto Sans JP"', '700 1em "Noto Sans JP"'];
+    const fams = ['400 1em "UDSG"', '700 1em "UDSG"', '400 1em "FLFrutiger"', '700 1em "FLFrutiger"'];
     try {
       await Promise.race([
         Promise.all(fams.map(f => document.fonts.load(f, text))).then(() => document.fonts.ready),
         new Promise(r => setTimeout(r, 4000)),
       ]);
     } catch (e) { /* */ }
-    JLReq.composeAll(root);
-    applyGyodori(root);
-    root.classList.remove('pending');
+    try { JLReq.composeAll(root); applyGyodori(root); }
+    finally { root.classList.remove('pending'); }
   }
   // 見出しの行取り（JIS X 4051 8.3.3 d）
   function applyGyodori(root) {
@@ -393,12 +392,16 @@
     for (const p of posts) {
       const li = document.createElement('li');
       const tags = (p.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (p.draft ? '<span class="draft">下書き</span>' : '');
-      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><time class="entry-date num" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time><p class="title">${esc(p.title || '（無題）')}</p>${tags ? `<span class="entry-tags">${tags}</span>` : ''}</a>`;
+      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><span class="entry-main"><p class="title">${esc(p.title || '（無題）')}</p>${tags ? `<span class="entry-tags">${tags}</span>` : ''}</span><time class="entry-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></a>`;
       ul.appendChild(li);
     }
     const wrap = document.createElement('div');
     wrap.className = 'wrap';
-    wrap.appendChild(ul);
+    const board = document.createElement('section');
+    board.className = 'board';
+    board.innerHTML = `<div class="board-h">記事一覧<small>${posts.length} 件</small></div>`;
+    board.appendChild(ul);
+    wrap.appendChild(board);
     app.replaceChildren(wrap);
     await typeset(wrap);
   }
@@ -409,6 +412,7 @@
     const post = await loadPost(p.id);
     document.title = (post.title || '') + '｜401のブログ';
     const holder = document.createElement('div');
+    holder.className = 'wrap';
     app.replaceChildren(holder);
     holder.classList.add('pending');
     const art = await renderArticleInto(holder, post);
