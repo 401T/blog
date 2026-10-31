@@ -221,40 +221,74 @@
 
   // ---------------------------------------------------------------- 書体（平成明朝・平成角ゴシック）
   // 書体ファイルは書体用の鍵で暗号化して置き，その鍵を閲覧用の鍵で暗号化した fontkey.bin に入れる
-  let fontsReady = Promise.resolve(), fontsStarted = false;
+  // 一度復号した書体は端末の Cache Storage に置き，次からはログイン画面でも使う（書体は秘密ではない）
+  let fontsReady = Promise.resolve(), fontsStarted = false, fontsOn = false;
+  const FONT_CACHE = 'blog-fonts-v1';
+  function addFace(f, buf) {
+    // 太さの範囲指定（'100 900'）に対応しないブラウザがあるので，太さごとに登録する
+    const ws = String(f.weight).includes(' ') ? ['400', '700'] : [String(f.weight)];
+    return Promise.all(ws.map(async (w) => {
+      const face = new FontFace(f.family, buf, { weight: w, style: 'normal', display: 'swap' });
+      await face.load();
+      document.fonts.add(face);
+    }));
+  }
+  function fontsLoaded() {
+    fontsOn = true;
+    document.documentElement.classList.add('fonts-on');
+    // 組み終えたあとに届いたときは組み直す
+    app.querySelectorAll('.jl-ready').forEach(root => { JLReq.recomposeAll(root, true); applyGyodori(root); });
+  }
+  async function loadCachedFonts() {
+    try {
+      if (!('caches' in window)) return false;
+      const c = await caches.open(FONT_CACHE);
+      const r = await c.match('fonts.json');
+      if (!r) return false;
+      const fj = await r.json();
+      const bufs = [];
+      for (const f of fj.faces) { const x = await c.match(f.path); if (!x) return false; bufs.push(await x.arrayBuffer()); }
+      await Promise.all(fj.faces.map((f, i) => addFace(f, bufs[i])));
+      return true;
+    } catch (e) { console.error(e); return false; }
+  }
   async function loadFonts() {
     let fk;
     try { fk = await unsealJSON(await readData('fontkey.bin'), key); } catch (e) { return false; }
     const fj = await readData('fonts.json', true);
     const fkey = await importRaw(fk.k);
+    let c = null;
+    try { if ('caches' in window) c = await caches.open(FONT_CACHE); } catch (e) { /* */ }
     await Promise.all(fj.faces.map(async (f) => {
       let u8;
       const r = await fetch('data/' + f.path);   // ファイル名に内容のハッシュが入っているので，ふつうにキャッシュしてよい
       if (r.ok) u8 = new Uint8Array(await r.arrayBuffer());
       else if (canUseApi()) u8 = await ghRaw('data/' + f.path);
       else throw new Error('font ' + r.status);
-      const face = new FontFace(f.family, await unseal(u8, fkey), { weight: f.weight, display: 'swap' });
-      await face.load();
-      document.fonts.add(face);
+      const plain = await unseal(u8, fkey);
+      await addFace(f, plain);
+      if (c) { try { await c.put(f.path, new Response(plain)); } catch (e) { /* */ } }
     }));
+    if (c) { try { await c.put('fonts.json', new Response(JSON.stringify(fj))); } catch (e) { /* */ } }
     return true;
   }
+  // 起動時：端末に残っている書体があれば，パスワードの入力前から使う
+  const cachedFonts = loadCachedFonts().then((ok) => { if (ok) fontsLoaded(); return ok; });
+  fontsReady = cachedFonts;
   function startFonts() {
     if (fontsStarted) return;
     fontsStarted = true;
-    fontsReady = loadFonts().then((ok) => {
-      if (!ok) return;
-      document.documentElement.classList.add('fonts-on');
-      // 組み終えたあとに届いたときは組み直す
-      app.querySelectorAll('.jl-ready').forEach(root => { JLReq.recomposeAll(root, true); applyGyodori(root); });
-    }).catch((e) => { console.error(e); fontsStarted = false; });
+    fontsReady = cachedFonts.then((ok) => ok || loadFonts().then((ok2) => { if (ok2) fontsLoaded(); }))
+      .catch((e) => { console.error(e); fontsStarted = false; });
   }
-  // #/fontkey/<鍵> を投稿できる端末で開くと，書体の鍵を閲覧用の鍵で暗号化して保存する
+  // #/fontkey/<鍵>：書体の鍵を閲覧用の鍵で暗号化して保存する（投稿できる端末で）
+  const PENDING_FK = 'blog-fontkey-pending';
   async function installFontKey(b64url) {
     const k = b64url.replace(/-/g, '+').replace(/_/g, '/');
     const fj = JSON.parse(td.decode(await ghRaw('data/fonts.json')));
     await unseal(await ghRaw('data/' + fj.faces[0].path), await importRaw(k));   // 鍵が正しいか確かめる
     await commit('書体の鍵を保存', [{ path: 'data/fontkey.bin', data: await sealJSON({ k }, key) }]);
+    try { localStorage.removeItem(PENDING_FK); } catch (e) { /* */ }
     fontsStarted = false;
     startFonts();
   }
@@ -283,8 +317,8 @@
     const env = { file: '' };
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
-    const band = (post.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (post.draft ? '<span class="draft">下書き</span>' : '');
-    art.innerHTML = `<div class="board post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time></p>` : ''}</header><div class="post-band no-jl">${band}</div><div class="post-body">${html}</div></div>`;
+    const meta2 = [post.date ? `<time datetime="${esc(post.date)}">${esc(fmtDate(post.date))}</time>` : '', (post.tags || []).map(esc).join('・'), post.draft ? '<span class="draft">下書き</span>' : ''].filter(Boolean).join('　');
+    art.innerHTML = `<div class="board post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${meta2 ? `<p class="post-date no-jl">${meta2}</p>` : ''}</header><div class="post-body">${html}</div></div>`;
     numberParts(art.querySelector('.post-body'));
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
@@ -367,6 +401,7 @@
     form.username.value = userName();
     form.show.addEventListener('change', () => { form.password.type = form.show.checked ? 'text' : 'password'; });
     if (message) msg.textContent = message;
+    else if (/^#\/fontkey\//.test(location.hash)) msg.textContent = '書体の設定です。編集用パスワードを入れてください。';
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = form.querySelector('button');
@@ -522,14 +557,13 @@
     const wrap = document.createElement('div');
     wrap.className = 'wrap';
     wrap.innerHTML = `<div class="board toc-box">${notice ? `<p class="notice no-jl">${esc(notice)}</p>` : ''}
-      <header class="toc-head no-jl"><p class="toc-kicker">401のブログ</p><h1 class="toc-title">目　次</h1></header></div>`;
+      <header class="toc-head no-jl"><h1 class="toc-title">目　次</h1></header></div>`;
     const ul = document.createElement('ol');
     ul.className = 'posts';
     if (!posts.length) ul.innerHTML = `<li class="empty no-jl">まだ記事がありません。</li>`;
     posts.forEach((p, i) => {
       const li = document.createElement('li');
-      const tg = (p.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (p.draft ? '<span class="draft">下書き</span>' : '');
-      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><span class="toc-no no-jl">${posts.length - i}</span><span class="entry-main"><p class="title">${esc(p.title || '（無題）')}</p></span><span class="toc-lead no-jl" aria-hidden="true"></span><time class="entry-date no-jl" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></a>${tg ? `<span class="entry-tags no-jl">${tg}</span>` : ''}`;
+      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><span class="toc-no no-jl">${posts.length - i}</span><span class="entry-main"><p class="title">${esc(p.title || '（無題）')}</p></span><span class="toc-lead no-jl" aria-hidden="true"></span><time class="entry-date no-jl" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></a>${p.draft ? '<span class="entry-tags no-jl"><span class="draft">下書き</span></span>' : ''}`;
       ul.appendChild(li);
     });
     wrap.querySelector('.toc-box').appendChild(ul);
@@ -549,7 +583,7 @@
     const art = await renderArticleInto(holder, post);
     const nav = document.createElement('nav');
     nav.className = 'article-nav no-jl';
-    nav.innerHTML = `<a href="#/">一覧へ</a>${canUseApi() ? `　<a href="#/write/${encodeURIComponent(p.id)}">編集する</a>` : ''}`;
+    nav.innerHTML = `<a href="#/">目次へ戻る</a>${canUseApi() ? `　<a href="#/write/${encodeURIComponent(p.id)}">編集する</a>` : ''}`;
     art.querySelector('.post-box').appendChild(nav);
     holder.classList.remove('pending');
     window.scrollTo(0, 0);
@@ -566,10 +600,16 @@
     const m = /^\/p\/([^#]+)/.exec(h);
     try {
       const fkm = /^\/fontkey\/([\w-]+)/.exec(h);
-      if (fkm) {
+      let pending = null;
+      try { pending = localStorage.getItem(PENDING_FK); } catch (e) { /* */ }
+      if (fkm || (pending && canUseApi())) {
+        const fk = fkm ? fkm[1] : pending;
         let note = '';
         if (canUseApi()) {
-          try { await installFontKey(fkm[1]); note = '書体を設定しました。'; } catch (e) { console.error(e); note = '書体を設定できませんでした（' + (e.message || e) + '）。'; }
+          try { await installFontKey(fk); note = '書体を設定しました。'; } catch (e) { console.error(e); note = '書体を設定できませんでした（' + (e.message || e) + '）。'; }
+        } else {
+          try { localStorage.setItem(PENDING_FK, fk); } catch (e) { /* */ }
+          note = '書体の設定は，編集用パスワードで入ったときに行われます。「閉じる」を押し，編集用パスワードで入り直してください。';
         }
         history.replaceState(null, '', '#/');
         await renderList(note);
