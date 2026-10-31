@@ -26,7 +26,7 @@
     let cpl = Math.min(36, Math.floor(avail / fs));
     let size = fs;
     if (cpl < 15) { cpl = 15; size = Math.floor(avail / 15); }
-    const gap = cpl > 30 ? 0.8 : 0.7;
+    const gap = 0.75;   // 行間は文字サイズの0.75倍（全角の四分の三）
     const r = document.documentElement.style;
     r.setProperty('--fs', size + 'px');
     r.setProperty('--gap', gap + 'em');
