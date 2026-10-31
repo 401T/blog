@@ -336,7 +336,7 @@
   }
 
   async function renderList() {
-    document.title = 'ブログ';
+    document.title = '401のブログ';
     const editing = canUseApi();
     const posts = index.posts.filter(p => editing || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.ts || 0) - (a.ts || 0));
     const ul = document.createElement('ul');
@@ -359,7 +359,7 @@
     const p = index.posts.find(x => x.id === id);
     if (!p) { app.innerHTML = '<p class="error">記事が見つかりません。</p><p class="article-nav"><a href="#/">一覧へ</a></p>'; return; }
     const post = await loadPost(p.id);
-    document.title = (post.title || '') + '｜ブログ';
+    document.title = (post.title || '') + '｜401のブログ';
     const holder = document.createElement('div');
     app.replaceChildren(holder);
     holder.classList.add('pending');
