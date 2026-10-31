@@ -267,6 +267,7 @@
       <p class="ed-note">このブログはまだ設定されていません。閲覧用のパスワードを決めてください。パスワードはどこにも送信されず，この画面の中で暗号の鍵に変換されます。</p>
       <label class="ed-field"><span>閲覧用パスワード（12文字以上を推奨）</span><input name="pw1" type="password" autocomplete="new-password"></label>
       <label class="ed-field"><span>もう一度</span><input name="pw2" type="password" autocomplete="new-password"></label>
+      <label class="ed-check"><input type="checkbox" name="show"><span>パスワードを表示する</span></label>
       <label class="ed-field"><span>リポジトリ</span><input name="repo" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="401T/blog"></label>
       <label class="ed-field"><span>GitHub のアクセストークン</span><input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
       ${TOKEN_HELP}
@@ -274,6 +275,9 @@
       <p class="ed-status" role="status">${message || ''}</p>`;
     el.querySelector('[name=repo]').value = S.repo;
     el.querySelector('[name=token]').value = S.token;
+    el.querySelector('[name=show]').addEventListener('change', (e) => {
+      el.querySelectorAll('[name=pw1],[name=pw2]').forEach(i => { i.type = e.target.checked ? 'text' : 'password'; });
+    });
     const status = el.querySelector('.ed-status');
     el.querySelector('button.ed-primary').addEventListener('click', async (ev) => {
       const pw1 = el.querySelector('[name=pw1]').value, pw2 = el.querySelector('[name=pw2]').value;
@@ -347,7 +351,7 @@
     if (!meta) return showSetup();
     if (!key) return showLogin();
     logoutBtn.hidden = false;
-    writeLink.hidden = false;
+    writeLink.hidden = !canUseApi();   // 「書く」は投稿用トークンを設定した端末にだけ表示する
     const h = location.hash.replace(/^#/, '');
     const m = /^\/p\/([^#]+)/.exec(h);
     try {
