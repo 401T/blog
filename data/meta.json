@@ -1,1 +1,1 @@
-{"v":2,"site":"FRZRfKmZPiDc","kdf":{"name":"PBKDF2","hash":"SHA-256","iterations":600000,"salt":"WAXwbWSfeDU+YAkYF1G/Mw==","norm":"NFKC"},"macros":{"\\R":"\\mathbb{R}","\\dd":"\\mathrm{d}"}}
+{"v":2,"site":"FRZRfKmZPiDc","kdf":{"name":"PBKDF2","hash":"SHA-256","iterations":600000,"salt":"WAXwbWSfeDU+YAkYF1G/Mw==","norm":"NFKC"},"macros":{"\\R":"\\mathbb{R}","\\dd":"\\mathrm{d}"},"check":"ylDl2CJmQc06EBzw7CwAgrWCVUZWGz1Ti92y9TM06+UnjRo50u6X+o98J/dOl1HUXbO1sD1ufcFRqfs6iISQCiKPJaA="}
