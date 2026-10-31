@@ -244,7 +244,9 @@
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
     const band = (post.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (post.draft ? '<span class="draft">下書き</span>' : '');
-    art.innerHTML = `<div class="board post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time></p>` : ''}</header><div class="post-band no-jl">${band}</div><div class="post-body">${html}</div></div>`;
+    const pal = [['var(--c1)', '#141414'], ['var(--c2)', '#fff'], ['var(--c3)', '#141414'], ['var(--c4)', '#141414']];
+    const [pc, pci] = pal[Array.from(post.title || '').reduce((a, c) => a + c.codePointAt(0), 0) % 4];
+    art.innerHTML = `<div class="board post-box" style="--pc:${pc};--pci:${pci}"><header class="post-head"><p class="post-kicker no-jl"><span>401 BLOG</span></p><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time></p>` : ''}</header><div class="post-band no-jl">${band}</div><div class="post-body">${html}</div></div>`;
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
     await Promise.all(Array.from(art.querySelectorAll('img')).map(img => img.decode().catch(() => {})));
@@ -460,24 +462,40 @@
     document.title = '401のブログ';
     const editing = canUseApi();
     const posts = index.posts.filter(p => editing || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.ts || 0) - (a.ts || 0));
+    const wrap = document.createElement('div');
+    wrap.className = 'wrap-wide';
+    const latest = posts[0] && posts[0].date ? posts[0].date.replace(/-/g, '.') : '—';
+    const tags = Array.from(new Set(posts.flatMap(p => p.tags || []))).slice(0, 8);
+    const words = ['401 BLOG', 'NEW POSTS', 'TeX', 'MARKDOWN', ...tags.map(t => '#' + t), 'JIS X 4051', 'JLREQ'];
+    const tick = Array(4).fill(words).flat().map(w => `<span>${esc(w)}</span><span aria-hidden="true">✦</span>`).join('');
+    wrap.innerHTML = `
+      <section class="hero card-box no-jl">
+        <i class="shape s1" data-spin="0.25"></i><i class="shape s2" data-spin="-0.4"></i><i class="shape s3" data-float="0.35"></i><i class="shape s4" data-float="-0.6"></i>
+        <div class="hero-in" data-par="0.25">
+          <p class="hero-kicker">PERSONAL BLOG / 401</p>
+          <h1 class="hero-title"><span>401の</span><span class="pop">ブログ</span></h1>
+          <p class="hero-sub">思いついたこと，調べたこと，計算したこと。</p>
+          <div class="hero-stats"><span><b>${posts.length}</b>本の記事</span><span>最終更新<b>${esc(latest)}</b></span></div>
+        </div>
+      </section>
+      <div class="ticker no-jl" aria-hidden="true"><div class="ticker-track">${tick}</div></div>
+      <h2 class="sec-h no-jl">記事<small>${posts.length} POSTS</small></h2>`;
     const ul = document.createElement('ul');
     ul.className = 'posts';
-    if (!posts.length) ul.innerHTML = `<li class="empty">まだ記事がありません。</li>`;
-    for (const p of posts) {
+    if (!posts.length) ul.innerHTML = `<li class="empty no-jl">まだ記事がありません。</li>`;
+    posts.forEach((p, i) => {
       const li = document.createElement('li');
-      const tags = (p.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (p.draft ? '<span class="draft">下書き</span>' : '');
-      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><span class="entry-main"><p class="title">${esc(p.title || '（無題）')}</p>${tags ? `<span class="entry-tags">${tags}</span>` : ''}</span><time class="entry-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></a>`;
+      li.className = 'card rv';
+      li.style.setProperty('--d', (Math.min(i, 3) * 70) + 'ms');
+      const tg = (p.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (p.draft ? '<span class="draft">下書き</span>' : '');
+      const no = String(posts.length - i).padStart(2, '0');
+      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><span class="card-top no-jl"><span class="card-no">${no}</span>${i === 0 ? '<span class="card-new">NEW!</span>' : ''}<time class="entry-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></span><span class="entry-main"><p class="title">${esc(p.title || '（無題）')}</p>${tg ? `<span class="entry-tags no-jl">${tg}</span>` : ''}</span><span class="card-go no-jl" aria-hidden="true"><i>→</i></span></a>`;
       ul.appendChild(li);
-    }
-    const wrap = document.createElement('div');
-    wrap.className = 'wrap';
-    const board = document.createElement('section');
-    board.className = 'board';
-    board.innerHTML = `<div class="board-h">記事一覧<small>${posts.length} 件</small></div>`;
-    board.appendChild(ul);
-    wrap.appendChild(board);
+    });
+    wrap.appendChild(ul);
     app.replaceChildren(wrap);
     await typeset(wrap);
+    FX.scan(wrap);
   }
 
   async function renderPost(id) {
@@ -491,18 +509,21 @@
     holder.classList.add('pending');
     const art = await renderArticleInto(holder, post);
     const nav = document.createElement('nav');
-    nav.className = 'article-nav';
+    nav.className = 'article-nav no-jl';
     nav.innerHTML = `<a href="#/">一覧へ</a>${canUseApi() ? `　<a href="#/write/${encodeURIComponent(p.id)}">編集する</a>` : ''}`;
-    art.appendChild(nav);
+    art.querySelector('.post-box').appendChild(nav);
     holder.classList.remove('pending');
     window.scrollTo(0, 0);
+    FX.scan(holder);
   }
 
   async function route() {
     if (!meta) return showSetup();
     if (!key) return showLogin();
     logoutBtn.hidden = false;
-    writeLink.hidden = !canUseApi();   // 「書く」は投稿用トークンを設定した端末にだけ表示する
+    writeLink.hidden = !canUseApi();
+    document.body.dataset.view = location.hash.startsWith('#/write') ? 'write' : 'read';
+    FX.update();   // 「書く」は投稿用トークンを設定した端末にだけ表示する
     const h = location.hash.replace(/^#/, '');
     const m = /^\/p\/([^#]+)/.exec(h);
     try {
@@ -605,6 +626,65 @@
     await writeEditorFile(ok.raw, ok.kdf, [], 'トークンを更新');
     return true;
   }
+
+  // ---------------------------------------------------------------- スクロールの仕掛け
+  // 動かすのは translate・回転・不透明度だけ（組版の計測に使う字幅は変えない）
+  const FX = (() => {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+    const bar = document.querySelector('.progress i');
+    const fab = document.querySelector('.fab-top');
+    let io = null, lastY = 0, ticking = false, t0 = performance.now();
+    const seen = (el) => el.classList.add('in');
+    function scan(root) {
+      const els = root.querySelectorAll('.rv, .post-body h1, .post-body h2, .post-body h3, .post-body h4, .post-body h5, .post-body h6');
+      if (reduce.matches || !('IntersectionObserver' in window)) { els.forEach(seen); return; }
+      if (!io) io = new IntersectionObserver((ents) => ents.forEach(e => { if (e.isIntersecting) { seen(e.target); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+      els.forEach(el => io.observe(el));
+      update();
+    }
+    function update() {
+      ticking = false;
+      const y = window.scrollY, h = document.documentElement.scrollHeight - innerHeight;
+      const p = h > 0 ? Math.min(1, Math.max(0, y / h)) : 0;
+      bar.style.setProperty('--p', p.toFixed(4));
+      fab.style.setProperty('--p', p.toFixed(4));
+      fab.classList.toggle('on', y > 500);
+      // 下へ読み進めるときはヘッダーを隠し，戻るときに出す（投稿画面では隠さない）
+      const hide = document.body.dataset.view !== 'write' && y > 160 && y > lastY + 2;
+      if (y < lastY - 2 || y <= 160 || document.body.dataset.view === 'write') document.body.classList.remove('hdr-hide');
+      else if (hide) document.body.classList.add('hdr-hide');
+      lastY = y;
+      if (reduce.matches) return;
+      const hero = app.querySelector('.hero');
+      if (hero && y < hero.offsetTop + hero.offsetHeight + 200) {
+        hero.querySelectorAll('[data-spin]').forEach(el => { el.style.transform = `rotate(${y * +el.dataset.spin}deg) translateY(${y * 0.15}px)`; });
+        hero.querySelectorAll('[data-float]').forEach(el => { el.style.transform = `translate(${y * +el.dataset.float * 0.4}px, ${y * +el.dataset.float}px)`; });
+        hero.querySelectorAll('[data-par]').forEach(el => { el.style.transform = `translateY(${y * +el.dataset.par}px)`; el.style.opacity = String(Math.max(0, 1 - y / (hero.offsetHeight * 1.1))); });
+      }
+      const head = app.querySelector('.post-head');
+      if (head) head.style.setProperty('--sp', p.toFixed(4));
+    }
+    // 流れる帯：時間で流れ，スクロールすると速く進む
+    let tickX = 0, lastFrameY = 0;
+    function loop(now) {
+      const track = app.querySelector('.ticker-track');
+      if (track && !reduce.matches) {
+        const dt = Math.min(64, now - t0);
+        const dy = Math.abs(window.scrollY - lastFrameY);
+        tickX -= dt * 0.04 + dy * 0.9;
+        const half = track.scrollWidth / 2;
+        if (half > 0 && -tickX > half) tickX += half;
+        track.style.transform = `translateX(${tickX.toFixed(1)}px)`;
+      }
+      lastFrameY = window.scrollY; t0 = now;
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+    window.addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+    window.addEventListener('resize', () => requestAnimationFrame(update));
+    fab.addEventListener('click', (e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: reduce.matches ? 'auto' : 'smooth' }); });
+    return { scan, update };
+  })();
 
   const CTX = {
     get meta() { return meta; }, get key() { return key; }, get index() { return index; }, set index(v) { index = v; },

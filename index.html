@@ -9,17 +9,19 @@
 <meta name="theme-color" content="#1e1e1e">
 <title>401のブログ</title>
 <link rel="stylesheet" href="katex/katex.min.css">
-<link rel="stylesheet" href="assets/style.css?v=16">
+<link rel="stylesheet" href="assets/style.css?v=17">
 </head>
 <body>
 <header class="site">
-  <div class="wrap site-inner">
-    <a class="site-title" href="#/"><b>401のブログ</b><small>401 BLOG</small></a>
+  <div class="wrap-wide site-inner">
+    <a class="site-title" href="#/"><span class="logo" aria-hidden="true">401</span><span><b>401のブログ</b><small>401 BLOG</small></span></a>
     <span class="site-tools"><a class="write-link" href="#/write" hidden>書く</a><button class="logout" type="button" hidden>閉じる</button></span>
   </div>
+  <div class="progress" aria-hidden="true"><i></i></div>
 </header>
 <main id="app" aria-live="polite"></main>
-<footer class="site"><div class="wrap"><span class="num">© 401</span><a href="#/" class="to-top">ページの先頭へ</a></div></footer>
+<a class="fab-top" href="#" aria-label="ページの先頭へ"><b>TOP</b></a>
+<footer class="site"><div class="wrap-wide"><span class="num">© 401</span><a href="#/" class="to-top">ページの先頭へ</a></div></footer>
 <template id="login">
   <section class="panel board">
     <div class="board-h">ログイン<small>401 BLOG</small></div>
@@ -38,9 +40,9 @@
     </div>
   </section>
 </template>
-<script src="assets/markdown-it.min.js?v=16" defer></script>
-<script src="katex/katex.min.js?v=16" defer></script>
-<script src="assets/jlreq.js?v=16" defer></script>
-<script src="assets/app.js?v=16" defer></script>
+<script src="assets/markdown-it.min.js?v=17" defer></script>
+<script src="katex/katex.min.js?v=17" defer></script>
+<script src="assets/jlreq.js?v=17" defer></script>
+<script src="assets/app.js?v=17" defer></script>
 </body>
 </html>
