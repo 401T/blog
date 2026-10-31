@@ -191,8 +191,8 @@
     const env = { file: '' };
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
-    const chips = (post.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('') + (post.draft ? '<span class="chip dim">下書き</span>' : '');
-    art.innerHTML = `<header class="post-hero"><div class="wrap">${chips ? `<div class="post-chips">${chips}</div>` : ''}<h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(fmtDate(post.date))}</time></p>` : ''}</div></header><div class="post-box"><div class="post-body">${html}</div></div>`;
+    const tags = (post.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('') + (post.draft ? '<span class="tag draft">下書き</span>' : '');
+    art.innerHTML = `<div class="sheet post-box"><header class="post-head">${tags ? `<p class="post-tags no-jl">${tags}</p>` : ''}<h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(fmtDate(post.date))}</time></p>` : ''}</header><div class="post-body">${html}</div></div>`;
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
     await Promise.all(Array.from(art.querySelectorAll('img')).map(img => img.decode().catch(() => {})));
@@ -210,7 +210,7 @@
   async function typeset(root) {
     root.classList.add('pending');
     const text = root.textContent;
-    const fams = ['400 1em "Noto Sans JP"', '700 1em "Noto Sans JP"', '900 1em "Noto Sans JP"', '400 1em "Outfit"', '800 1em "Outfit"'];
+    const fams = ['400 1em "Noto Serif JP"', '700 1em "Noto Serif JP"', '700 1em "Noto Sans JP"', '400 1em "Source Serif 4"', '600 1em "Source Serif 4"'];
     try {
       await Promise.race([
         Promise.all(fams.map(f => document.fonts.load(f, text))).then(() => document.fonts.ready),
@@ -339,19 +339,23 @@
     document.title = 'ブログ';
     const editing = canUseApi();
     const posts = index.posts.filter(p => editing || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.ts || 0) - (a.ts || 0));
-    const ul = document.createElement('ul');
-    ul.className = 'post-grid';
+    const ul = document.createElement('ol');
+    ul.className = 'toc';
     if (!posts.length) ul.innerHTML = `<li class="empty">まだ記事がありません。${editing ? '右上の「書く」から投稿できます。' : ''}</li>`;
-    for (const p of posts) {
+    posts.forEach((p, i) => {
       const li = document.createElement('li');
-      const tags = (p.tags || []).slice(0, 3).map(t => `<em class="chip">${esc(t)}</em>`).join('') + (p.draft ? '<em class="chip dim">下書き</em>' : '');
-      li.innerHTML = `<a class="card" href="#/p/${encodeURIComponent(p.id)}"><span class="card-top"><span class="card-tags">${tags}</span><time class="card-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></span><p class="title">${esc(p.title || '（無題）')}</p><span class="card-bar"></span></a>`;
+      const no = String(posts.length - i).padStart(2, '0');
+      const tags = (p.tags || []).slice(0, 3).map(t => `<span class="tag">${esc(t)}</span>`).join('') + (p.draft ? '<span class="tag draft">下書き</span>' : '');
+      li.innerHTML = `<a class="toc-item" href="#/p/${encodeURIComponent(p.id)}"><span class="toc-no">${no}</span><span class="toc-main"><p class="title">${esc(p.title || '（無題）')}</p>${tags ? `<span class="toc-tags">${tags}</span>` : ''}</span><span class="toc-lead" aria-hidden="true"></span><time class="toc-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></a>`;
       ul.appendChild(li);
-    }
+    });
     const wrap = document.createElement('div');
     wrap.className = 'wrap';
-    wrap.innerHTML = `<div class="sec-label"><b>NEW</b><span>新着記事</span></div>`;
-    wrap.appendChild(ul);
+    const sheet = document.createElement('section');
+    sheet.className = 'sheet toc-sheet';
+    sheet.innerHTML = `<h2 class="toc-h"><span>目次</span><small>Contents</small></h2>`;
+    sheet.appendChild(ul);
+    wrap.appendChild(sheet);
     app.replaceChildren(wrap);
     await typeset(wrap);
   }
