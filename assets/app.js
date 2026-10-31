@@ -67,11 +67,30 @@
 
   // ---------------------------------------------------------------- 端末に保存する設定
   function edSettings() {
-    let s = {};
+    let s = {}, t = {};
     try { s = JSON.parse(localStorage.getItem(ED_KEY) || '{}'); } catch (e) { /* */ }
-    return { token: s.token || '', repo: s.repo || guessRepo(), branch: s.branch || 'main' };
+    try { t = JSON.parse(sessionStorage.getItem(ED_KEY) || '{}'); } catch (e) { /* */ }
+    return { token: t.token || s.token || '', repo: t.repo || s.repo || guessRepo(), branch: t.branch || s.branch || 'main', fromOwner: !!(t.fromOwner || s.fromOwner) };
   }
-  function saveEdSettings(s) { try { localStorage.setItem(ED_KEY, JSON.stringify(s)); } catch (e) { /* */ } }
+  function saveEdSettings(s, sessionOnly) {
+    try {
+      if (sessionOnly) sessionStorage.setItem(ED_KEY, JSON.stringify(s));
+      else { localStorage.setItem(ED_KEY, JSON.stringify(s)); sessionStorage.removeItem(ED_KEY); }
+    } catch (e) { /* */ }
+  }
+  // 編集用パスワードから導いた鍵（editor.json の再暗号化に使う）
+  const edKeyName = () => 'blogedkey:' + (meta ? meta.site : '');
+  function saveEdKey(raw, remember) {
+    try { sessionStorage.setItem(edKeyName(), b64(raw)); if (remember) localStorage.setItem(edKeyName(), b64(raw)); } catch (e) { /* */ }
+  }
+  function loadEdKey() { try { return sessionStorage.getItem(edKeyName()) || localStorage.getItem(edKeyName()); } catch (e) { return null; } }
+  function forgetOwner() {
+    try {
+      sessionStorage.removeItem(edKeyName()); localStorage.removeItem(edKeyName()); sessionStorage.removeItem(ED_KEY);
+      const s = JSON.parse(localStorage.getItem(ED_KEY) || '{}');
+      if (s.fromOwner) localStorage.removeItem(ED_KEY);   // 編集用パスワードで入った端末からはトークンも消す
+    } catch (e) { /* */ }
+  }
   function guessRepo() {
     const h = location.hostname;
     if (!h.endsWith('.github.io')) return '';
@@ -80,7 +99,9 @@
     return owner + '/' + (seg && !seg.includes('.') ? seg : h);
   }
   const storeName = () => 'blogkey:' + (meta ? meta.site : '');
+  let keyRaw = null;
   function saveKey(raw, remember) {
+    keyRaw = raw;
     try {
       sessionStorage.setItem(storeName(), b64(raw));
       if (remember) localStorage.setItem(storeName(), b64(raw));
@@ -117,9 +138,16 @@
 
   // 複数ファイルの追加・変更・削除を1コミットにまとめる
   async function commit(message, changes) {
+    changes = changes.slice();
     const S = edSettings();
     const ref = await gh('GET', `/git/ref/heads/${encodeURIComponent(S.branch)}`);
     const base = await gh('GET', `/git/commits/${ref.object.sha}`);
+    let existing = null;
+    if (changes.some(c => c.delete)) {
+      const t0 = await gh('GET', `/git/trees/${base.tree.sha}?recursive=1`);
+      existing = new Set(t0.tree.map(x => x.path));
+      changes = changes.filter(c => !c.delete || existing.has(c.path));
+    }
     const tree = [];
     for (const c of changes) {
       if (c.delete) { tree.push({ path: c.path, mode: '100644', type: 'blob', sha: null }); continue; }
@@ -261,14 +289,34 @@
       msg.textContent = '確認しています…';
       try {
         const u8 = await readData('index.bin');
-        let found = null;
-        for (const cand of passwordCandidates(form.password.value)) {
-          const d = await deriveKey(cand, meta.kdf);
-          try { index = await unsealJSON(u8, d.key); found = d; break; } catch (e) { /* 次の候補 */ }
+        let edFile = null;
+        try { edFile = await readData('editor.json', true); } catch (e) { if (e.status !== 404) throw e; }
+        const pw = form.password.value, remember = form.remember.checked;
+        // まず入力どおり（閲覧用 → 編集用），次に入力のゆれを補った候補を順に試す
+        const cands = passwordCandidates(pw);
+        const attempts = [['view', cands[0]], ...(edFile ? [['owner', cands[0]]] : []),
+          ...cands.slice(1).map(c => ['view', c]), ...(edFile ? cands.slice(1, 8).map(c => ['owner', c]) : [])];
+        let ok = false;
+        for (const [kind, cand] of attempts) {
+          if (kind === 'view') {
+            const d = await deriveKey(cand, meta.kdf);
+            try { index = await unsealJSON(u8, d.key); key = d.key; saveKey(d.raw, remember); ok = true; break; } catch (e) { /* 次へ */ }
+          } else {
+            const d = await deriveKey(cand, edFile.kdf);
+            let box;
+            try { box = await unsealJSON(unb64(edFile.box), d.key); } catch (e) { continue; }
+            const vraw = unb64(box.viewKey);
+            const vk = await subtle.importKey('raw', vraw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+            index = await unsealJSON(u8, vk);
+            key = vk;
+            saveKey(vraw, remember);
+            saveEdKey(d.raw, remember);
+            saveEdSettings({ token: box.token, repo: box.repo || guessRepo(), branch: box.branch || 'main', fromOwner: true }, !remember);
+            ok = true;
+            break;
+          }
         }
-        if (!found) throw new Error('wrong password');
-        key = found.key;
-        saveKey(found.raw, form.remember.checked);
+        if (!ok) throw new Error('wrong password');
         form.password.value = '';
         route();
       } catch (err) {
@@ -380,7 +428,8 @@
     const h = location.hash.replace(/^#/, '');
     const m = /^\/p\/([^#]+)/.exec(h);
     try {
-      if (h.startsWith('/write')) {
+      if (h.startsWith('/write') && !canUseApi()) { history.replaceState(null, '', '#/'); await renderList(); }
+      else if (h.startsWith('/write')) {
         const ed = await import('./editor.js?v=' + V);
         await ed.render(app, CTX, decodeURIComponent(h.slice('/write'.length).replace(/^\//, '')));
       } else if (m) await renderPost(decodeURIComponent(m[1]));
@@ -404,7 +453,41 @@
       <li>Permissions → Repository permissions の <b>Contents</b> を「Read and write」にする。</li>
       <li>「Generate token」を押し，表示された github_pat_… をここに貼る。</li></ol></details>`;
 
-  async function changePassword(newPw, progress) {
+  // 編集用パスワードの設定：トークンと閲覧用の鍵を，編集用パスワードの鍵で暗号化して置く
+  async function writeEditorFile(edRaw, edKdf, extraChanges = [], message = '編集用パスワードを設定', viewRaw = keyRaw) {
+    const S = edSettings();
+    const ek = await subtle.importKey('raw', edRaw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+    const box = await sealJSON({ token: S.token, repo: S.repo, branch: S.branch, viewKey: b64(viewRaw) }, ek);
+    await commit(message, [...extraChanges, { path: 'data/editor.json', data: JSON.stringify({ v: 1, kdf: edKdf, box: b64(box) }) }]);
+  }
+  async function setOwnerPassword(pw) {
+    if (!keyRaw) throw Object.assign(new Error('no view key'), { status: 0 });
+    // 閲覧用パスワードと同じものは使えない
+    const vd = await deriveKey(pw, meta.kdf);
+    try { await unsealJSON(await ghRaw('data/index.bin'), vd.key); throw Object.assign(new Error('same'), { same: true }); } catch (e) { if (e.same) throw e; }
+    const kdf = newKdf();
+    const d = await deriveKey(pw, kdf);
+    await writeEditorFile(d.raw, kdf);
+    saveEdKey(d.raw, true);
+  }
+  async function hasEditorFile() { try { await ghRaw('data/editor.json'); return true; } catch (e) { if (e.status === 404) return false; throw e; } }
+  // 編集用パスワードの鍵を得る（この端末に無ければ入力されたパスワードから）
+  async function ownerKey(pwIfNeeded) {
+    const saved = loadEdKey();
+    const ed = JSON.parse(td.decode(await ghRaw('data/editor.json')));
+    const tryRaw = async (raw) => { const k = await subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']); await unsealJSON(unb64(ed.box), k); return raw; };
+    if (saved) { try { return { raw: await tryRaw(unb64(saved)), kdf: ed.kdf }; } catch (e) { /* */ } }
+    if (pwIfNeeded) for (const c of passwordCandidates(pwIfNeeded).slice(0, 8)) {
+      const d = await deriveKey(c, ed.kdf);
+      try { await tryRaw(d.raw); saveEdKey(d.raw, false); return { raw: d.raw, kdf: ed.kdf }; } catch (e) { /* */ }
+    }
+    return null;
+  }
+
+  async function changePassword(newPw, progress, ownerPw) {
+    const edExists = await hasEditorFile();
+    const ok = edExists ? await ownerKey(ownerPw) : null;
+    if (edExists && !ok) throw Object.assign(new Error('owner password needed'), { needOwner: true });
     const kdf = newKdf();
     const { raw, key: nk } = await deriveKey(newPw, kdf);
     const idx = await unsealJSON(await ghRaw('data/index.bin'), key);
@@ -423,20 +506,29 @@
     changes.push({ path: 'data/index.bin', data: await sealJSON(idx, nk) });
     changes.push({ path: 'data/meta.json', data: JSON.stringify(m) });
     progress('保存しています…');
-    await commit('閲覧用パスワードを変更', changes);
+    if (edExists) await writeEditorFile(ok.raw, ok.kdf, changes, '閲覧用パスワードを変更', raw);
+    else await commit('閲覧用パスワードを変更', changes);
     meta = m; key = nk; index = idx;
     postCache.clear();
     forgetKey();
     saveKey(raw, true);
   }
 
+  async function updateOwnerToken(ownerPw) {
+    if (!(await hasEditorFile())) return false;
+    const ok = await ownerKey(ownerPw);
+    if (!ok) throw Object.assign(new Error('owner password needed'), { needOwner: true });
+    await writeEditorFile(ok.raw, ok.kdf, [], 'トークンを更新');
+    return true;
+  }
+
   const CTX = {
     get meta() { return meta; }, get key() { return key; }, get index() { return index; }, set index(v) { index = v; },
     postCache, imgCache, gh, ghRaw, commit, seal, sealJSON, unsealJSON, loadIndex, loadPost, randId,
-    edSettings, saveEdSettings, normRepo, changePassword, apiErrorText, TOKEN_HELP, renderArticleInto, imageIds, esc, fmtDate,
+    edSettings, saveEdSettings, normRepo, changePassword, setOwnerPassword, hasEditorFile, updateOwnerToken, apiErrorText, TOKEN_HELP, renderArticleInto, imageIds, esc, fmtDate,
   };
 
-  logoutBtn.addEventListener('click', () => { forgetKey(); key = null; index = null; postCache.clear(); location.hash = '#/'; showLogin(); });
+  logoutBtn.addEventListener('click', () => { forgetKey(); forgetOwner(); key = null; keyRaw = null; index = null; postCache.clear(); history.replaceState(null, '', '#/'); showLogin(); });
   window.addEventListener('hashchange', route);
   let rt = 0;
   window.addEventListener('resize', () => {
@@ -462,7 +554,7 @@
     }
     const saved = loadKey();
     if (saved) {
-      try { const k = await importRaw(saved); index = await loadIndex(k); key = k; } catch (e) { forgetKey(); }
+      try { const k = await importRaw(saved); index = await loadIndex(k); key = k; keyRaw = unb64(saved); } catch (e) { forgetKey(); }
     }
     route();
   })();

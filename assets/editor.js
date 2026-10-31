@@ -28,53 +28,102 @@ async function prepareImage(file) {
   return { bytes: new Uint8Array(await blob.arrayBuffer()), ext: png ? 'png' : 'jpg' };
 }
 
-// ---------------------------------------------------------------- 設定
-function renderSettings(app, message) {
+// ---------------------------------------------------------------- 確認つきボタン（ブラウザのダイアログは使わない）
+function twoStep(btn, confirmLabel, action) {
+  const label = btn.textContent;
+  let armed = false, timer = 0;
+  btn.addEventListener('click', async () => {
+    if (btn.disabled) return;
+    if (!armed) {
+      armed = true;
+      btn.textContent = confirmLabel;
+      btn.classList.add('armed');
+      timer = setTimeout(() => { armed = false; btn.textContent = label; btn.classList.remove('armed'); }, 4000);
+      return;
+    }
+    clearTimeout(timer);
+    armed = false; btn.textContent = label; btn.classList.remove('armed');
+    btn.disabled = true;
+    try { await action(); } finally { btn.disabled = false; }
+  });
+}
+
+// ---------------------------------------------------------------- 設定（持ち主だけが開ける）
+async function renderSettings(app, message) {
   const S = C.edSettings();
+  const hasOwner = await C.hasEditorFile().catch(() => false);
+  const pwInput = (name, label) => `<label class="ed-field"><span>${label}</span><input name="${name}" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>`;
   const el = h(`<section class="ed ed-settings">
-    <h2 class="ed-h">投稿の設定</h2>
-    <p class="ed-note">この端末から投稿するための設定です。この端末のブラウザにだけ保存されます。</p>
+    <h2 class="ed-h">編集用パスワード</h2>
+    <p class="ed-note">${hasOwner ? '設定済みです。' : 'まだ設定されていません。'}ログイン画面でこのパスワードを入れると，どのブラウザ・端末からでも記事を書いたり消したりできます。閲覧用とは別の，あなただけのパスワードにしてください（12文字以上を推奨）。</p>
+    ${pwInput('op1', hasOwner ? '新しい編集用パスワード' : '編集用パスワード')}
+    ${pwInput('op2', 'もう一度')}
+    <div class="ed-actions"><button class="ed-primary" type="button" data-act="setowner">${hasOwner ? '変更する' : '設定する'}</button></div>
+    <p class="ed-status ed-ownerstatus" role="status"></p>
+
+    <h2 class="ed-h ed-h2">閲覧用パスワードの変更</h2>
+    <p class="ed-note">記事と画像をすべて新しいパスワードで暗号化し直します。読者には新しいパスワードを伝え直してください。</p>
+    ${pwInput('np1', '新しい閲覧用パスワード')}
+    ${pwInput('np2', 'もう一度')}
+    <div class="ed-actions"><button class="ed-primary" type="button" data-act="chpw">変更する</button></div>
+    <p class="ed-status ed-pwstatus" role="status"></p>
+
+    <h2 class="ed-h ed-h2">GitHub のトークン</h2>
+    <p class="ed-note">トークンの期限が切れたときだけ貼り替えてください。${hasOwner ? '編集用パスワードで入るすべての端末に反映されます。' : ''}</p>
     <label class="ed-field"><span>リポジトリ</span><input name="repo" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="401T/blog"></label>
     <label class="ed-field"><span>アクセストークン</span><input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
     ${C.TOKEN_HELP}
-    <div class="ed-actions"><button class="ed-primary" type="button" data-act="save">保存して確認</button>${S.token ? '<button type="button" data-act="forget">この端末から消す</button>' : ''}</div>
-    <p class="ed-status" role="status">${message || ''}</p>
-    ${S.token && C.key ? `<h2 class="ed-h ed-h2">閲覧用パスワードの変更</h2>
-    <p class="ed-note">今のパスワードは不要です（この端末がログイン中なので）。記事と画像をすべて新しいパスワードで暗号化し直します。ほかの端末では新しいパスワードでログインし直してください。</p>
-    <label class="ed-field"><span>新しいパスワード</span><input name="np1" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
-    <label class="ed-field"><span>もう一度</span><input name="np2" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
-    <div class="ed-actions"><button class="ed-primary" type="button" data-act="chpw">パスワードを変更</button></div>
-    <p class="ed-status ed-pwstatus" role="status"></p>` : ''}
+    <div class="ed-actions"><button class="ed-primary" type="button" data-act="save">保存</button></div>
+    <p class="ed-status ed-tokenstatus" role="status">${message || ''}</p>
+
+    <div class="ed-ownerpw" hidden>
+      <h2 class="ed-h ed-h2">確認</h2>
+      <p class="ed-note">この端末では編集用パスワードの確認が必要です。入力してから，もう一度ボタンを押してください。</p>
+      ${pwInput('ownerpw', '今の編集用パスワード')}
+    </div>
   </section>`);
-  el.querySelector('[name=repo]').value = S.repo;
-  el.querySelector('[name=token]').value = S.token;
-  const status = el.querySelector('.ed-status');
-  el.querySelector('[data-act=save]').addEventListener('click', async () => {
-    const s = { ...S, repo: C.normRepo(el.querySelector('[name=repo]').value), token: el.querySelector('[name=token]').value.trim() };
-    C.saveEdSettings(s);
-    status.textContent = '確認しています…';
-    try {
-      await C.gh('GET', `/git/ref/heads/${encodeURIComponent(s.branch)}`);
-      if (location.hash === '#/write') renderIndex(app); else location.hash = '#/write';
-    } catch (e) { status.textContent = C.apiErrorText(e); }
-  });
-  const chpw = el.querySelector('[data-act=chpw]');
-  if (chpw) chpw.addEventListener('click', async () => {
-    const st = el.querySelector('.ed-pwstatus');
-    const a = el.querySelector('[name=np1]').value, b = el.querySelector('[name=np2]').value;
+  const $ = (q) => el.querySelector(q);
+  $('[name=repo]').value = S.repo;
+  $('[name=token]').value = S.token;
+  const ownerPw = () => $('[name=ownerpw]').value || null;
+  const needOwner = (st) => { $('.ed-ownerpw').hidden = false; st.textContent = '下の欄に今の編集用パスワードを入れて，もう一度押してください。'; $('[name=ownerpw]').focus(); };
+
+  twoStep($('[data-act=setowner]'), 'もう一度押すと設定', async () => {
+    const st = $('.ed-ownerstatus');
+    const a = $('[name=op1]').value, b = $('[name=op2]').value;
     if (a.length < 8) { st.textContent = '8文字以上にしてください。'; return; }
     if (a !== b) { st.textContent = '2つのパスワードが一致しません。'; return; }
-    if (!confirm('閲覧用パスワードを変更します。新しいパスワードを控えましたか？')) return;
-    chpw.disabled = true;
+    st.textContent = '設定しています…';
     try {
-      await C.changePassword(a, (t) => { st.textContent = t; });
-      el.querySelectorAll('[name=np1],[name=np2]').forEach(i => { i.value = ''; });
-      st.textContent = '変更しました。ほかの端末への反映には1〜2分かかります。';
-    } catch (e) { console.error(e); st.textContent = C.apiErrorText(e); }
-    chpw.disabled = false;
+      await C.setOwnerPassword(a);
+      $('[name=op1]').value = ''; $('[name=op2]').value = '';
+      st.textContent = '設定しました。ほかの端末ではログイン画面でこのパスワードを入れてください（反映まで1〜2分）。';
+    } catch (e) { st.textContent = e.same ? '閲覧用パスワードと同じものは使えません。' : C.apiErrorText(e); }
   });
-  const forget = el.querySelector('[data-act=forget]');
-  if (forget) forget.addEventListener('click', () => { C.saveEdSettings({ ...S, token: '' }); renderSettings(app, '消しました。'); });
+
+  twoStep($('[data-act=chpw]'), 'もう一度押すと変更', async () => {
+    const st = $('.ed-pwstatus');
+    const a = $('[name=np1]').value, b = $('[name=np2]').value;
+    if (a.length < 8) { st.textContent = '8文字以上にしてください。'; return; }
+    if (a !== b) { st.textContent = '2つのパスワードが一致しません。'; return; }
+    try {
+      await C.changePassword(a, (t) => { st.textContent = t; }, ownerPw());
+      $('[name=np1]').value = ''; $('[name=np2]').value = '';
+      st.textContent = '変更しました。ほかの端末への反映には1〜2分かかります。';
+    } catch (e) { console.error(e); if (e.needOwner) needOwner(st); else st.textContent = C.apiErrorText(e); }
+  });
+
+  $('[data-act=save]').addEventListener('click', async () => {
+    const st = $('.ed-tokenstatus');
+    const s = { ...S, repo: C.normRepo($('[name=repo]').value), token: $('[name=token]').value.trim() };
+    C.saveEdSettings(s, !!sessionStorage.getItem('blog-editor'));
+    st.textContent = '確認しています…';
+    try {
+      await C.gh('GET', `/git/ref/heads/${encodeURIComponent(s.branch)}`);
+      const shared = await C.updateOwnerToken(ownerPw());
+      st.textContent = shared ? '保存しました。すべての端末に反映されます。' : '保存しました。';
+    } catch (e) { if (e.needOwner) needOwner(st); else st.textContent = C.apiErrorText(e); }
+  });
   app.replaceChildren(el);
 }
 
@@ -293,8 +342,7 @@ async function renderEditor(app, path) {
     }
   });
   const del = el.querySelector('[data-act=delete]');
-  if (del) del.addEventListener('click', async () => {
-    if (!confirm('この記事を削除します。よろしいですか？')) return;
+  if (del) twoStep(del, 'もう一度押すと削除', async () => {
     status.textContent = '削除しています…';
     try {
       const idx = await C.unsealJSON(await C.ghRaw('data/index.bin'), C.key);
@@ -317,10 +365,7 @@ async function renderEditor(app, path) {
 
 export async function render(app, ctx, path) {
   C = ctx;
-  const S = C.edSettings();
-  if (path === 'settings' || !S.token || !S.repo) {
-    return renderSettings(app, path !== 'settings' && !S.token ? 'この端末から投稿するには，最初に GitHub のトークンを設定してください。' : '');
-  }
+  if (path === 'settings') return renderSettings(app);
   if (!path) return renderIndex(app);
   return renderEditor(app, path);
 }

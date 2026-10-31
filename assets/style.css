@@ -237,3 +237,5 @@ footer.site .wrap { display: flex; justify-content: space-between; align-items: 
 .ed-help summary { cursor: pointer; color: var(--link); }
 .ed-preview { font-family: var(--serif); font-size: var(--fs); line-height: var(--lf); padding-top: var(--lf); }
 .ed-new { margin: 4px 0 14px; }
+
+.ed button.armed { background: var(--red); border-color: var(--red); color: #fff; }
