@@ -191,7 +191,7 @@
     const env = { file: '' };
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
-    const meta2 = [post.date ? `<time datetime="${esc(post.date)}">${esc(fmtDate(post.date))}</time>` : '', ...(post.tags || []).map(esc), post.draft ? '下書き' : ''].filter(Boolean).join('　');
+    const meta2 = [post.date ? `<time class="num" datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time>` : '', ...(post.tags || []).map(t => `<span>${esc(t)}</span>`), post.draft ? '<span>下書き</span>' : ''].filter(Boolean).join('<i aria-hidden="true">/</i>');
     art.innerHTML = `<div class="post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${meta2 ? `<p class="post-meta no-jl">${meta2}</p>` : ''}</header><div class="post-body">${html}</div></div>`;
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
@@ -210,7 +210,7 @@
   async function typeset(root) {
     root.classList.add('pending');
     const text = root.textContent;
-    const fams = ['400 1em "Noto Serif JP"', '700 1em "Noto Serif JP"'];
+    const fams = ['400 1em "Noto Serif JP"', '700 1em "Noto Serif JP"', '400 1em "EB Garamond"'];
     try {
       await Promise.race([
         Promise.all(fams.map(f => document.fonts.load(f, text))).then(() => document.fonts.ready),
@@ -344,7 +344,8 @@
     if (!posts.length) ul.innerHTML = `<li class="empty">まだ記事がありません。</li>`;
     for (const p of posts) {
       const li = document.createElement('li');
-      li.innerHTML = `<time class="posts-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '/'))}</time><a href="#/p/${encodeURIComponent(p.id)}"><p class="title">${esc(p.title || '（無題）')}${p.draft ? '<small>（下書き）</small>' : ''}</p></a>`;
+      const tags = (p.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (p.draft ? '<span class="draft">下書き</span>' : '');
+      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><time class="entry-date num" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time><p class="title">${esc(p.title || '（無題）')}</p>${tags ? `<span class="entry-tags">${tags}</span>` : ''}</a>`;
       ul.appendChild(li);
     }
     const wrap = document.createElement('div');
