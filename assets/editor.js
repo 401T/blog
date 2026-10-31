@@ -315,8 +315,11 @@ async function renderEditor(app, path) {
     const btn = ev.currentTarget;
     btn.disabled = true;
     status.textContent = '暗号化して保存しています…';
+    let step = '';
     try {
-      const idx = C.unsealJSON ? await C.unsealJSON(await C.ghRaw('data/index.bin'), C.key) : C.index;
+      step = '一覧の読み込み';
+      const idx = await C.latestIndex();
+      step = '暗号化';
       const id = existing ? existing.id : C.randId(12);
       const entry = { id, title: p.title, date: p.date, tags: p.tags, draft: p.draft, ts: Date.now() };
       const i = idx.posts.findIndex(x => x.id === id);
@@ -331,7 +334,9 @@ async function renderEditor(app, path) {
         const old = C.postCache.get(id);
         if (old) for (const oldId of C.imageIds(old.md)) if (!used.has(oldId)) changes.push({ path: `data/i-${oldId}.bin`, delete: true });
       }
+      step = 'GitHub への保存';
       await C.commit(`${existing ? '記事を更新' : '記事を追加'}`, changes);
+      step = '';
       for (const [imgId, img] of pending) if (used.has(imgId)) C.imgCache.set(imgId, img.url);
       pending.clear();
       C.postCache.set(id, p);
@@ -343,7 +348,7 @@ async function renderEditor(app, path) {
       btn.disabled = false;
     } catch (e) {
       console.error(e);
-      status.textContent = C.apiErrorText(e) + ' 書きかけはこの端末に残っています。';
+      status.textContent = (step ? `［${step}］` : '') + C.apiErrorText(e) + ' 書きかけはこの端末に残っています。';
       btn.disabled = false;
     }
   });
@@ -351,7 +356,7 @@ async function renderEditor(app, path) {
   if (del) twoStep(del, 'もう一度押すと削除', async () => {
     status.textContent = '削除しています…';
     try {
-      const idx = await C.unsealJSON(await C.ghRaw('data/index.bin'), C.key);
+      const idx = await C.latestIndex();
       idx.posts = idx.posts.filter(x => x.id !== existing.id);
       const old = await C.loadPost(existing.id);
       const changes = [{ path: `data/p-${existing.id}.bin`, delete: true }, { path: 'data/index.bin', data: await C.sealJSON(idx, C.key) }];

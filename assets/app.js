@@ -203,6 +203,16 @@
     if (canUseApi()) { try { return JSON.parse(td.decode(await ghRaw('data/meta.json'))); } catch (e) { /* */ } }
     return null;
   }
+  // 保存の直前に，GitHub 上の最新の一覧を読む．読めないときは，今の鍵が最新の確認用データと合うことを確かめたうえで手元の一覧を使う
+  async function latestIndex() {
+    let lastErr;
+    for (let i = 0; i < 2; i++) {
+      try { return await unsealJSON(await ghRaw('data/index.bin'), key); } catch (e) { lastErr = e; if (e.status) throw e; }
+    }
+    const m = JSON.parse(td.decode(await ghRaw('data/meta.json')));
+    if (m.check && (await checkKey(key, m)) && index) { console.warn('index.bin を復号できないため手元の一覧を使う', lastErr); return JSON.parse(JSON.stringify(index)); }
+    throw Object.assign(new Error('GitHub 上の一覧を今の鍵で開けません。「閉じる」で出て入り直してから，もう一度保存してください'), { status: 0 });
+  }
   async function loadIndex(k = key) { return unsealJSON(await readData('index.bin'), k); }
   async function loadPost(file) {
     if (postCache.has(file)) return postCache.get(file);
@@ -626,7 +636,8 @@
   }
 
   const normRepo = (s) => s.trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$|\/$/g, '');
-  const apiErrorText = (e) => !e.status && /[ぁ-んァ-ン一-龠]/.test(e.message || '') ? e.message + '。' : e.status === 401 ? 'トークンが無効か期限切れです。'
+  const apiErrorText = (e) => e && e.name && e.name !== 'Error' && !e.status ? `処理に失敗しました（${e.name}${e.message ? '：' + e.message : ''}）。`
+    : !e.status && /[ぁ-んァ-ン一-龠]/.test(e.message || '') ? e.message + '。' : e.status === 401 ? 'トークンが無効か期限切れです。'
     : e.status === 403 ? '権限が足りません。トークンの Contents が「Read and write」になっているか確認してください。'
       : e.status === 404 ? 'リポジトリが見つかりません。リポジトリ名と，トークンの対象リポジトリを確認してください。'
         : e.status === 409 || e.status === 422 ? '別の端末での更新と重なりました。もう一度保存してください。'
@@ -716,7 +727,7 @@
 
   const CTX = {
     get meta() { return meta; }, get key() { return key; }, get index() { return index; }, set index(v) { index = v; },
-    postCache, imgCache, gh, ghRaw, commit, seal, sealJSON, unsealJSON, loadIndex, loadPost, randId,
+    postCache, imgCache, gh, ghRaw, commit, latestIndex, seal, sealJSON, unsealJSON, loadIndex, loadPost, randId,
     edSettings, saveEdSettings, normRepo, changePassword, setOwnerPassword, hasEditorFile, updateOwnerToken, apiErrorText, TOKEN_HELP, renderArticleInto, imageIds, esc, fmtDate,
   };
 
