@@ -219,6 +219,46 @@
     return url;
   }
 
+  // ---------------------------------------------------------------- 書体（平成明朝・平成角ゴシック）
+  // 書体ファイルは書体用の鍵で暗号化して置き，その鍵を閲覧用の鍵で暗号化した fontkey.bin に入れる
+  let fontsReady = Promise.resolve(), fontsStarted = false;
+  async function loadFonts() {
+    let fk;
+    try { fk = await unsealJSON(await readData('fontkey.bin'), key); } catch (e) { return false; }
+    const fj = await readData('fonts.json', true);
+    const fkey = await importRaw(fk.k);
+    await Promise.all(fj.faces.map(async (f) => {
+      let u8;
+      const r = await fetch('data/' + f.path);   // ファイル名に内容のハッシュが入っているので，ふつうにキャッシュしてよい
+      if (r.ok) u8 = new Uint8Array(await r.arrayBuffer());
+      else if (canUseApi()) u8 = await ghRaw('data/' + f.path);
+      else throw new Error('font ' + r.status);
+      const face = new FontFace(f.family, await unseal(u8, fkey), { weight: f.weight, display: 'swap' });
+      await face.load();
+      document.fonts.add(face);
+    }));
+    return true;
+  }
+  function startFonts() {
+    if (fontsStarted) return;
+    fontsStarted = true;
+    fontsReady = loadFonts().then((ok) => {
+      if (!ok) return;
+      document.documentElement.classList.add('fonts-on');
+      // 組み終えたあとに届いたときは組み直す
+      app.querySelectorAll('.jl-ready').forEach(root => { JLReq.recomposeAll(root, true); applyGyodori(root); });
+    }).catch((e) => { console.error(e); fontsStarted = false; });
+  }
+  // #/fontkey/<鍵> を投稿できる端末で開くと，書体の鍵を閲覧用の鍵で暗号化して保存する
+  async function installFontKey(b64url) {
+    const k = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    const fj = JSON.parse(td.decode(await ghRaw('data/fonts.json')));
+    await unseal(await ghRaw('data/' + fj.faces[0].path), await importRaw(k));   // 鍵が正しいか確かめる
+    await commit('書体の鍵を保存', [{ path: 'data/fontkey.bin', data: await sealJSON({ k }, key) }]);
+    fontsStarted = false;
+    startFonts();
+  }
+
   // ---------------------------------------------------------------- Markdown → 記事
   let mdLib = null;
   function markdownLib() {
@@ -244,14 +284,31 @@
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
     const band = (post.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (post.draft ? '<span class="draft">下書き</span>' : '');
-    const pal = [['var(--c1)', '#141414'], ['var(--c2)', '#fff'], ['var(--c3)', '#141414'], ['var(--c4)', '#141414']];
-    const [pc, pci] = pal[Array.from(post.title || '').reduce((a, c) => a + c.codePointAt(0), 0) % 4];
-    art.innerHTML = `<div class="board post-box" style="--pc:${pc};--pci:${pci}"><header class="post-head"><p class="post-kicker no-jl"><span>401 BLOG</span></p><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time></p>` : ''}</header><div class="post-band no-jl">${band}</div><div class="post-body">${html}</div></div>`;
+    art.innerHTML = `<div class="board post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time></p>` : ''}</header><div class="post-band no-jl">${band}</div><div class="post-body">${html}</div></div>`;
+    numberParts(art.querySelector('.post-body'));
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
     await Promise.all(Array.from(art.querySelectorAll('img')).map(img => img.decode().catch(() => {})));
     await typeset(art);
     return art;
+  }
+
+  // 節番号（## → 1，### → 1.1）と図番号（第1図）を付ける
+  function numberParts(body) {
+    let h2 = 0, h3 = 0, fig = 0;
+    body.querySelectorAll('h2, h3, figure').forEach(el => {
+      if (el.tagName === 'FIGURE') {
+        if (!el.querySelector('img')) return;
+        fig++;
+        let cap = el.querySelector('figcaption');
+        if (!cap) { cap = document.createElement('figcaption'); el.appendChild(cap); }
+        cap.insertAdjacentHTML('afterbegin', `<span class="fno">第${fig}図</span>${cap.textContent.trim() ? '\u3000' : ''}`);
+        return;
+      }
+      let no;
+      if (el.tagName === 'H2') { h2++; h3 = 0; no = String(h2); } else { if (!h2) return; h3++; no = h2 + '.' + h3; }
+      el.insertAdjacentHTML('afterbegin', `<span class="hno">${no}</span>\u3000`);
+    });
   }
 
   // ---------------------------------------------------------------- 表示
@@ -264,11 +321,11 @@
   async function typeset(root) {
     root.classList.add('pending');
     const text = root.textContent;
-    const fams = ['400 1em "UDSG"', '700 1em "UDSG"', '400 1em "FLFrutiger"', '700 1em "FLFrutiger"'];
+    void text;
     try {
       await Promise.race([
-        Promise.all(fams.map(f => document.fonts.load(f, text))).then(() => document.fonts.ready),
-        new Promise(r => setTimeout(r, 4000)),
+        fontsReady.then(() => document.fonts.ready),
+        new Promise(r => setTimeout(r, 8000)),
       ]);
     } catch (e) { /* */ }
     try { JLReq.composeAll(root); applyGyodori(root); }
@@ -458,44 +515,26 @@
     app.replaceChildren(el);
   }
 
-  async function renderList() {
+  async function renderList(notice) {
     document.title = '401のブログ';
     const editing = canUseApi();
     const posts = index.posts.filter(p => editing || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.ts || 0) - (a.ts || 0));
     const wrap = document.createElement('div');
-    wrap.className = 'wrap-wide';
-    const latest = posts[0] && posts[0].date ? posts[0].date.replace(/-/g, '.') : '—';
-    const tags = Array.from(new Set(posts.flatMap(p => p.tags || []))).slice(0, 8);
-    const words = ['401 BLOG', 'NEW POSTS', 'TeX', 'MARKDOWN', ...tags.map(t => '#' + t), 'JIS X 4051', 'JLREQ'];
-    const tick = Array(4).fill(words).flat().map(w => `<span>${esc(w)}</span><span aria-hidden="true">✦</span>`).join('');
-    wrap.innerHTML = `
-      <section class="hero card-box no-jl">
-        <i class="shape s1" data-spin="0.25"></i><i class="shape s2" data-spin="-0.4"></i><i class="shape s3" data-float="0.35"></i><i class="shape s4" data-float="-0.6"></i>
-        <div class="hero-in" data-par="0.25">
-          <p class="hero-kicker">PERSONAL BLOG / 401</p>
-          <h1 class="hero-title"><span>401の</span><span class="pop">ブログ</span></h1>
-          <p class="hero-sub">思いついたこと，調べたこと，計算したこと。</p>
-          <div class="hero-stats"><span><b>${posts.length}</b>本の記事</span><span>最終更新<b>${esc(latest)}</b></span></div>
-        </div>
-      </section>
-      <div class="ticker no-jl" aria-hidden="true"><div class="ticker-track">${tick}</div></div>
-      <h2 class="sec-h no-jl">記事<small>${posts.length} POSTS</small></h2>`;
-    const ul = document.createElement('ul');
+    wrap.className = 'wrap';
+    wrap.innerHTML = `<div class="board toc-box">${notice ? `<p class="notice no-jl">${esc(notice)}</p>` : ''}
+      <header class="toc-head no-jl"><p class="toc-kicker">401のブログ</p><h1 class="toc-title">目　次</h1></header></div>`;
+    const ul = document.createElement('ol');
     ul.className = 'posts';
     if (!posts.length) ul.innerHTML = `<li class="empty no-jl">まだ記事がありません。</li>`;
     posts.forEach((p, i) => {
       const li = document.createElement('li');
-      li.className = 'card rv';
-      li.style.setProperty('--d', (Math.min(i, 3) * 70) + 'ms');
       const tg = (p.tags || []).map(t => `<span>${esc(t)}</span>`).join('') + (p.draft ? '<span class="draft">下書き</span>' : '');
-      const no = String(posts.length - i).padStart(2, '0');
-      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><span class="card-top no-jl"><span class="card-no">${no}</span>${i === 0 ? '<span class="card-new">NEW!</span>' : ''}<time class="entry-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></span><span class="entry-main"><p class="title">${esc(p.title || '（無題）')}</p>${tg ? `<span class="entry-tags no-jl">${tg}</span>` : ''}</span><span class="card-go no-jl" aria-hidden="true"><i>→</i></span></a>`;
+      li.innerHTML = `<a class="entry" href="#/p/${encodeURIComponent(p.id)}"><span class="toc-no no-jl">${posts.length - i}</span><span class="entry-main"><p class="title">${esc(p.title || '（無題）')}</p></span><span class="toc-lead no-jl" aria-hidden="true"></span><time class="entry-date no-jl" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></a>${tg ? `<span class="entry-tags no-jl">${tg}</span>` : ''}`;
       ul.appendChild(li);
     });
-    wrap.appendChild(ul);
+    wrap.querySelector('.toc-box').appendChild(ul);
     app.replaceChildren(wrap);
     await typeset(wrap);
-    FX.scan(wrap);
   }
 
   async function renderPost(id) {
@@ -514,20 +553,27 @@
     art.querySelector('.post-box').appendChild(nav);
     holder.classList.remove('pending');
     window.scrollTo(0, 0);
-    FX.scan(holder);
   }
 
   async function route() {
     if (!meta) return showSetup();
     if (!key) return showLogin();
+    startFonts();
     logoutBtn.hidden = false;
     writeLink.hidden = !canUseApi();
-    document.body.dataset.view = location.hash.startsWith('#/write') ? 'write' : 'read';
-    FX.update();   // 「書く」は投稿用トークンを設定した端末にだけ表示する
+    document.body.dataset.view = location.hash.startsWith('#/write') ? 'write' : 'read';   // 「書く」は投稿用トークンを設定した端末にだけ表示する
     const h = location.hash.replace(/^#/, '');
     const m = /^\/p\/([^#]+)/.exec(h);
     try {
-      if (h.startsWith('/write') && !canUseApi()) { history.replaceState(null, '', '#/'); await renderList(); }
+      const fkm = /^\/fontkey\/([\w-]+)/.exec(h);
+      if (fkm) {
+        let note = '';
+        if (canUseApi()) {
+          try { await installFontKey(fkm[1]); note = '書体を設定しました。'; } catch (e) { console.error(e); note = '書体を設定できませんでした（' + (e.message || e) + '）。'; }
+        }
+        history.replaceState(null, '', '#/');
+        await renderList(note);
+      } else if (h.startsWith('/write') && !canUseApi()) { history.replaceState(null, '', '#/'); await renderList(); }
       else if (h.startsWith('/write')) {
         const ed = await import('./editor.js?v=' + V);
         await ed.render(app, CTX, decodeURIComponent(h.slice('/write'.length).replace(/^\//, '')));
@@ -607,6 +653,7 @@
         try { changes.push({ path: `data/i-${id}.bin`, data: await seal(await unseal(await ghRaw(`data/i-${id}.bin`), key), nk) }); } catch (e) { if (e.status !== 404) throw e; }
       }
     }
+    try { const fk = await unsealJSON(await ghRaw('data/fontkey.bin'), key); changes.push({ path: 'data/fontkey.bin', data: await sealJSON(fk, nk) }); } catch (e) { if (e.status !== 404) throw e; }
     const m = { ...meta, kdf, check: await makeCheck(nk, meta.site) };
     changes.push({ path: 'data/index.bin', data: await sealJSON(idx, nk) });
     changes.push({ path: 'data/meta.json', data: JSON.stringify(m) });
@@ -626,65 +673,6 @@
     await writeEditorFile(ok.raw, ok.kdf, [], 'トークンを更新');
     return true;
   }
-
-  // ---------------------------------------------------------------- スクロールの仕掛け
-  // 動かすのは translate・回転・不透明度だけ（組版の計測に使う字幅は変えない）
-  const FX = (() => {
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)');
-    const bar = document.querySelector('.progress i');
-    const fab = document.querySelector('.fab-top');
-    let io = null, lastY = 0, ticking = false, t0 = performance.now();
-    const seen = (el) => el.classList.add('in');
-    function scan(root) {
-      const els = root.querySelectorAll('.rv, .post-body h1, .post-body h2, .post-body h3, .post-body h4, .post-body h5, .post-body h6');
-      if (reduce.matches || !('IntersectionObserver' in window)) { els.forEach(seen); return; }
-      if (!io) io = new IntersectionObserver((ents) => ents.forEach(e => { if (e.isIntersecting) { seen(e.target); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
-      els.forEach(el => io.observe(el));
-      update();
-    }
-    function update() {
-      ticking = false;
-      const y = window.scrollY, h = document.documentElement.scrollHeight - innerHeight;
-      const p = h > 0 ? Math.min(1, Math.max(0, y / h)) : 0;
-      bar.style.setProperty('--p', p.toFixed(4));
-      fab.style.setProperty('--p', p.toFixed(4));
-      fab.classList.toggle('on', y > 500);
-      // 下へ読み進めるときはヘッダーを隠し，戻るときに出す（投稿画面では隠さない）
-      const hide = document.body.dataset.view !== 'write' && y > 160 && y > lastY + 2;
-      if (y < lastY - 2 || y <= 160 || document.body.dataset.view === 'write') document.body.classList.remove('hdr-hide');
-      else if (hide) document.body.classList.add('hdr-hide');
-      lastY = y;
-      if (reduce.matches) return;
-      const hero = app.querySelector('.hero');
-      if (hero && y < hero.offsetTop + hero.offsetHeight + 200) {
-        hero.querySelectorAll('[data-spin]').forEach(el => { el.style.transform = `rotate(${y * +el.dataset.spin}deg) translateY(${y * 0.15}px)`; });
-        hero.querySelectorAll('[data-float]').forEach(el => { el.style.transform = `translate(${y * +el.dataset.float * 0.4}px, ${y * +el.dataset.float}px)`; });
-        hero.querySelectorAll('[data-par]').forEach(el => { el.style.transform = `translateY(${y * +el.dataset.par}px)`; el.style.opacity = String(Math.max(0, 1 - y / (hero.offsetHeight * 1.1))); });
-      }
-      const head = app.querySelector('.post-head');
-      if (head) head.style.setProperty('--sp', p.toFixed(4));
-    }
-    // 流れる帯：時間で流れ，スクロールすると速く進む
-    let tickX = 0, lastFrameY = 0;
-    function loop(now) {
-      const track = app.querySelector('.ticker-track');
-      if (track && !reduce.matches) {
-        const dt = Math.min(64, now - t0);
-        const dy = Math.abs(window.scrollY - lastFrameY);
-        tickX -= dt * 0.04 + dy * 0.9;
-        const half = track.scrollWidth / 2;
-        if (half > 0 && -tickX > half) tickX += half;
-        track.style.transform = `translateX(${tickX.toFixed(1)}px)`;
-      }
-      lastFrameY = window.scrollY; t0 = now;
-      requestAnimationFrame(loop);
-    }
-    requestAnimationFrame(loop);
-    window.addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
-    window.addEventListener('resize', () => requestAnimationFrame(update));
-    fab.addEventListener('click', (e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: reduce.matches ? 'auto' : 'smooth' }); });
-    return { scan, update };
-  })();
 
   const CTX = {
     get meta() { return meta; }, get key() { return key; }, get index() { return index; }, set index(v) { index = v; },
