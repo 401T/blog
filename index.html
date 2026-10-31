@@ -6,22 +6,25 @@
 <meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#000000">
 <title>ブログ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@500;700&family=Noto+Serif+JP:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=block">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Outfit:wght@600;700;800;900&display=block">
 <link rel="stylesheet" href="katex/katex.min.css">
-<link rel="stylesheet" href="assets/style.css?v=5">
+<link rel="stylesheet" href="assets/style.css?v=6">
 </head>
 <body>
 <header class="site">
-  <div class="col site-inner">
+  <div class="wrap site-inner">
     <a class="site-title" href="#/">ブログ</a>
     <span class="site-tools"><a class="write-link" href="#/write" hidden>書く</a><button class="logout" type="button" hidden>閉じる</button></span>
   </div>
 </header>
-<main id="app" class="col" aria-live="polite"></main>
+<main id="app" aria-live="polite"></main>
+<footer class="site"><div class="wrap">パスワードで保護された個人ブログです。組版は JIS X 4051 に準拠しています。</div></footer>
 <template id="login">
+  <section class="panel"><div class="panel-h">LOGIN</div><div class="panel-b">
   <form class="login" autocomplete="on">
     <p class="login-lead">このブログを読むにはパスワードが必要です。</p>
     <input type="text" name="username" value="blog" autocomplete="username" hidden>
@@ -32,10 +35,11 @@
     <button type="submit">開く</button>
     <p class="login-msg" role="alert"></p>
   </form>
+  </div></section>
 </template>
-<script src="assets/markdown-it.min.js?v=5" defer></script>
-<script src="katex/katex.min.js?v=5" defer></script>
-<script src="assets/jlreq.js?v=5" defer></script>
-<script src="assets/app.js?v=5" defer></script>
+<script src="assets/markdown-it.min.js?v=6" defer></script>
+<script src="katex/katex.min.js?v=6" defer></script>
+<script src="assets/jlreq.js?v=6" defer></script>
+<script src="assets/app.js?v=6" defer></script>
 </body>
 </html>

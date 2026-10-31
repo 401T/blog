@@ -22,7 +22,7 @@
   function setHanmen() {
     const vw = document.documentElement.clientWidth;
     const fs = vw >= 720 ? 17 : 16;
-    const avail = vw - 2 * 16;
+    const avail = vw - 2 * 16 - 4;   // 左右の余白と箱の枠線
     let cpl = Math.min(36, Math.floor(avail / fs));
     let size = fs;
     if (cpl < 15) { cpl = 15; size = Math.floor(avail / 15); }
@@ -191,7 +191,8 @@
     const env = { file: '' };
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
-    art.innerHTML = `<header class="post-header"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date"><time datetime="${esc(post.date)}">${esc(fmtDate(post.date))}</time></p>` : ''}</header><div class="post-body">${html}</div>`;
+    const chips = (post.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('') + (post.draft ? '<span class="chip dim">下書き</span>' : '');
+    art.innerHTML = `<header class="post-hero"><div class="wrap">${chips ? `<div class="post-chips">${chips}</div>` : ''}<h1 class="post-title">${esc(post.title || '（無題）')}</h1>${post.date ? `<p class="post-date no-jl"><time datetime="${esc(post.date)}">${esc(fmtDate(post.date))}</time></p>` : ''}</div></header><div class="post-box"><div class="post-body">${html}</div></div>`;
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
     await Promise.all(Array.from(art.querySelectorAll('img')).map(img => img.decode().catch(() => {})));
@@ -209,7 +210,7 @@
   async function typeset(root) {
     root.classList.add('pending');
     const text = root.textContent;
-    const fams = ['400 1em "Noto Serif JP"', '700 1em "Noto Serif JP"', '700 1em "Noto Sans JP"', '400 1em "Source Serif 4"'];
+    const fams = ['400 1em "Noto Sans JP"', '700 1em "Noto Sans JP"', '900 1em "Noto Sans JP"', '400 1em "Outfit"', '800 1em "Outfit"'];
     try {
       await Promise.race([
         Promise.all(fams.map(f => document.fonts.load(f, text))).then(() => document.fonts.ready),
@@ -225,7 +226,7 @@
     const lf = hanmen.lf;
     root.querySelectorAll('.post-title, .post-body h1, .post-body h2, .post-body h3, .post-body h4, .post-body h5, .post-body h6').forEach(h => {
       h.style.minHeight = '';
-      const min = h.classList.contains('post-title') ? 4 : /^H[12]$/.test(h.tagName) ? 3 : 2;
+      const min = h.classList.contains('post-title') ? 2 : /^H[12]$/.test(h.tagName) ? 3 : 2;
       const n = Math.max(min, Math.ceil(h.getBoundingClientRect().height / lf - 0.01));
       h.style.minHeight = (n * lf) + 'px';
     });
@@ -339,14 +340,17 @@
     const editing = canUseApi();
     const posts = index.posts.filter(p => editing || !p.draft).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.ts || 0) - (a.ts || 0));
     const ul = document.createElement('ul');
-    ul.className = 'post-list';
+    ul.className = 'post-grid';
     if (!posts.length) ul.innerHTML = `<li class="empty">まだ記事がありません。${editing ? '右上の「書く」から投稿できます。' : ''}</li>`;
     for (const p of posts) {
       const li = document.createElement('li');
-      li.innerHTML = `<a href="#/p/${encodeURIComponent(p.id)}"><span class="date">${esc(fmtDate(p.date))}${p.draft ? '　下書き' : ''}</span><p class="title">${esc(p.title || '（無題）')}</p></a>`;
+      const tags = (p.tags || []).slice(0, 3).map(t => `<em class="chip">${esc(t)}</em>`).join('') + (p.draft ? '<em class="chip dim">下書き</em>' : '');
+      li.innerHTML = `<a class="card" href="#/p/${encodeURIComponent(p.id)}"><span class="card-top"><span class="card-tags">${tags}</span><time class="card-date" datetime="${esc(p.date || '')}">${esc((p.date || '').replace(/-/g, '.'))}</time></span><p class="title">${esc(p.title || '（無題）')}</p><span class="card-bar"></span></a>`;
       ul.appendChild(li);
     }
     const wrap = document.createElement('div');
+    wrap.className = 'wrap';
+    wrap.innerHTML = `<div class="sec-label"><b>NEW</b><span>新着記事</span></div>`;
     wrap.appendChild(ul);
     app.replaceChildren(wrap);
     await typeset(wrap);
