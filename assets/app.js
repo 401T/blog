@@ -192,7 +192,7 @@
     const html = md.render(post.md, env) + lib.renderFootnotes(md, env);
     const art = document.createElement('article');
     const meta2 = [post.date ? `<time class="num" datetime="${esc(post.date)}">${esc(post.date.replace(/-/g, '.'))}</time>` : '', ...(post.tags || []).map(t => `<span>${esc(t)}</span>`), post.draft ? '<span>下書き</span>' : ''].filter(Boolean).join('<i aria-hidden="true">/</i>');
-    art.innerHTML = `<div class="post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${meta2 ? `<p class="post-meta no-jl">${meta2}</p>` : ''}</header><div class="post-body">${html}</div></div>`;
+    art.innerHTML = `<div class="post-box"><header class="post-head"><h1 class="post-title">${esc(post.title || '（無題）')}</h1>${meta2 ? `<p class="post-meta no-jl">${meta2}</p>` : ''}<span class="shapes" aria-hidden="true"><i class="c"></i><i class="s"></i><i class="t"></i></span></header><div class="post-body">${html}</div></div>`;
     art.querySelectorAll('.post-body ol[start]').forEach(ol => { ol.style.counterReset = 'item ' + (parseInt(ol.getAttribute('start'), 10) - 1); });
     target.replaceChildren(art);
     await Promise.all(Array.from(art.querySelectorAll('img')).map(img => img.decode().catch(() => {})));
@@ -210,7 +210,7 @@
   async function typeset(root) {
     root.classList.add('pending');
     const text = root.textContent;
-    const fams = ['400 1em "Noto Serif JP"', '700 1em "Noto Serif JP"', '400 1em "EB Garamond"'];
+    const fams = ['400 1em "Noto Serif JP"', '400 1em "Noto Sans JP"', '700 1em "Noto Sans JP"'];
     try {
       await Promise.race([
         Promise.all(fams.map(f => document.fonts.load(f, text))).then(() => document.fonts.ready),
