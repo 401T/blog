@@ -64,6 +64,12 @@
   const importRaw = (s) => subtle.importKey('raw', unb64(s), 'AES-GCM', false, ['encrypt', 'decrypt']);
   const sealJSON = (o, k) => seal(te.encode(JSON.stringify(o)), k);
   const unsealJSON = async (u8, k) => JSON.parse(td.decode(await unseal(u8, k)));
+  // 鍵の確認用の小さな暗号文（meta.json に入れる）．一覧の読み込みとは独立に，パスワードが合っているかだけを判定できる
+  const CHECK = (site) => '401blog:' + site;
+  const makeCheck = async (k, site) => b64(await seal(te.encode(CHECK(site)), k));
+  async function checkKey(k, m = meta) {
+    try { return td.decode(await unseal(unb64(m.check), k)) === CHECK(m.site); } catch (e) { return false; }
+  }
 
   // ---------------------------------------------------------------- 端末に保存する設定
   function edSettings() {
@@ -179,6 +185,24 @@
     err.status = res.status;
     throw err;
   }
+  // 一覧を読む．Pages の反映待ちや古いキャッシュで復号できないときは，キャッシュを避けて読み直し，最後は GitHub から直接読む
+  async function freshIndex(k) {
+    try { return await unsealJSON(await readData('index.bin'), k); } catch (e) { /* 次へ */ }
+    try {
+      const r = await fetch('data/index.bin?r=' + randId(6), { cache: 'reload' });
+      if (r.ok) return await unsealJSON(new Uint8Array(await r.arrayBuffer()), k);
+    } catch (e) { /* 次へ */ }
+    if (canUseApi()) { try { return await unsealJSON(await ghRaw('data/index.bin'), k); } catch (e) { /* */ } }
+    throw Object.assign(new Error('index not ready'), { stale: true });
+  }
+  async function reloadMeta() {
+    try {
+      const r = await fetch('data/meta.json?r=' + randId(6), { cache: 'reload' });
+      if (r.ok) return await r.json();
+    } catch (e) { /* */ }
+    if (canUseApi()) { try { return JSON.parse(td.decode(await ghRaw('data/meta.json'))); } catch (e) { /* */ } }
+    return null;
+  }
   async function loadIndex(k = key) { return unsealJSON(await readData('index.bin'), k); }
   async function loadPost(file) {
     if (postCache.has(file)) return postCache.get(file);
@@ -275,66 +299,110 @@
     return Array.from(new Set(out)).filter(Boolean);
   }
 
+  const userName = () => '401blog-' + (meta ? meta.site.slice(0, 6) : '');
   function showLogin(message) {
     logoutBtn.hidden = true; writeLink.hidden = true;
     app.replaceChildren(document.getElementById('login').content.cloneNode(true));
     const form = app.querySelector('form');
     const msg = form.querySelector('.login-msg');
+    form.username.value = userName();
+    form.show.addEventListener('change', () => { form.password.type = form.show.checked ? 'text' : 'password'; });
     if (message) msg.textContent = message;
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = form.querySelector('button');
       btn.disabled = true;
       msg.textContent = '確認しています…';
+      const pw = form.password.value, remember = form.remember.checked;
       try {
-        const u8 = await readData('index.bin');
-        let edFile = null;
-        try { edFile = await readData('editor.json', true); } catch (e) { if (e.status !== 404) throw e; }
-        const pw = form.password.value, remember = form.remember.checked;
-        // まず入力どおり（閲覧用 → 編集用），次に入力のゆれを補った候補を順に試す
-        const cands = passwordCandidates(pw);
-        const attempts = [['view', cands[0]], ...(edFile ? [['owner', cands[0]]] : []),
-          ...cands.slice(1).map(c => ['view', c]), ...(edFile ? cands.slice(1, 8).map(c => ['owner', c]) : [])];
-        let ok = false;
-        for (const [kind, cand] of attempts) {
-          if (kind === 'view') {
-            const d = await deriveKey(cand, meta.kdf);
-            try { index = await unsealJSON(u8, d.key); key = d.key; saveKey(d.raw, remember); ok = true; break; } catch (e) { /* 次へ */ }
-          } else {
-            const d = await deriveKey(cand, edFile.kdf);
-            let box;
-            try { box = await unsealJSON(unb64(edFile.box), d.key); } catch (e) { continue; }
-            const vraw = unb64(box.viewKey);
-            const vk = await subtle.importKey('raw', vraw, 'AES-GCM', false, ['encrypt', 'decrypt']);
-            index = await unsealJSON(u8, vk);
-            key = vk;
-            saveKey(vraw, remember);
-            saveEdKey(d.raw, remember);
-            saveEdSettings({ token: box.token, repo: box.repo || guessRepo(), branch: box.branch || 'main', fromOwner: true }, !remember);
-            ok = true;
-            break;
-          }
+        let r = await tryLogin(pw, remember);
+        if (!r) {
+          // 古い meta.json を読んでいた可能性：読み直して，変わっていればもう一度試す
+          const m2 = await reloadMeta();
+          if (m2 && JSON.stringify(m2.kdf) !== JSON.stringify(meta.kdf)) { meta = m2; r = await tryLogin(pw, remember); }
         }
-        if (!ok) throw new Error('wrong password');
+        if (!r) {
+          msg.textContent = `パスワードが違います（入力された文字数：${Array.from(pw).length}）。「パスワードを表示する」で入力内容を確かめてください。`;
+          btn.disabled = false; form.password.select();
+          return;
+        }
         form.password.value = '';
+        upgradeMeta();
         route();
       } catch (err) {
-        msg.textContent = err.status === 404 ? 'サイトの更新が反映されていません。1〜2分待って再読み込みしてください。' : err.status ? '読み込みに失敗しました。' : 'パスワードが違います。';
+        console.error(err);
+        msg.textContent = err.stale ? 'パスワードは合っています。ただ，サイトの更新がまだ反映されていません。1〜2分待ってからもう一度「開く」を押してください。'
+          : err.status === 404 ? 'サイトの更新が反映されていません。1〜2分待って再読み込みしてください。'
+            : '読み込みに失敗しました（' + (err.message || err) + '）。';
         btn.disabled = false;
-        form.password.select();
       }
     });
+  }
+
+  // パスワードを試す．閲覧用・編集用のどちらでも入れる．違えば null，合っていれば true
+  async function tryLogin(pw, remember) {
+    let edFile = null;
+    try { edFile = await readData('editor.json', true); } catch (e) { if (e.status !== 404) throw e; }
+    let legacyIdx = null;   // 確認用の暗号文がない古い meta.json のときだけ一覧で判定する
+    if (!meta.check) legacyIdx = await readData('index.bin');
+    const cands = passwordCandidates(pw);
+    const attempts = [['view', cands[0]], ...(edFile ? [['owner', cands[0]]] : []),
+      ...cands.slice(1).map(c => ['view', c]), ...(edFile ? cands.slice(1, 8).map(c => ['owner', c]) : [])];
+    for (const [kind, cand] of attempts) {
+      if (kind === 'view') {
+        const d = await deriveKey(cand, meta.kdf);
+        if (meta.check) {
+          if (!(await checkKey(d.key))) continue;
+          index = await freshIndex(d.key);
+        } else {
+          try { index = await unsealJSON(legacyIdx, d.key); } catch (e) { continue; }
+        }
+        key = d.key; saveKey(d.raw, remember);
+        return true;
+      }
+      const d = await deriveKey(cand, edFile.kdf);
+      let box;
+      try { box = await unsealJSON(unb64(edFile.box), d.key); } catch (e) { continue; }
+      // 編集用パスワードが合った：トークンを先に復元し，一覧は GitHub から直接読めるようにする
+      saveEdSettings({ token: box.token, repo: box.repo || guessRepo(), branch: box.branch || 'main', fromOwner: true }, !remember);
+      saveEdKey(d.raw, remember);
+      const vraw = unb64(box.viewKey);
+      const vk = await importRaw(box.viewKey);
+      if (meta.check && !(await checkKey(vk))) {
+        const m2 = await reloadMeta();
+        if (m2) meta = m2;
+        if (meta.check && !(await checkKey(vk))) throw new Error('編集用パスワードは合っていますが，保存されている閲覧用の鍵が古くなっています。閲覧用パスワードで入り，設定で編集用パスワードを設定し直してください');
+      }
+      index = await freshIndex(vk);
+      key = vk; saveKey(vraw, remember);
+      return true;
+    }
+    return null;
+  }
+
+  // 確認用の暗号文がない古い meta.json に，投稿できる端末から追記しておく
+  async function upgradeMeta() {
+    if (meta.check || !canUseApi() || !key) return;
+    try {
+      const m = { ...meta, check: await makeCheck(key, meta.site) };
+      await commit('パスワード確認用のデータを追加', [{ path: 'data/meta.json', data: JSON.stringify(m) }]);
+      meta = m;
+    } catch (e) { console.error(e); }
   }
 
   // 初期設定：パスワードを決め，暗号化した空の一覧を作る（GitHub のトークンが必要）
   function showSetup(message) {
     logoutBtn.hidden = true; writeLink.hidden = true;
     const S = edSettings();
-    const el = document.createElement('section');
+    const site = randId(9);
+    const el = document.createElement('form');
     el.className = 'ed';
+    el.setAttribute('autocomplete', 'on');
+    el.addEventListener('submit', (e) => e.preventDefault());
     el.innerHTML = `
       <h2 class="ed-h">初期設定</h2>
       <p class="ed-note">このブログはまだ設定されていません。閲覧用のパスワードを決めてください。パスワードはどこにも送信されず，この画面の中で暗号の鍵に変換されます。</p>
+      <input type="text" name="username" autocomplete="username" value="401blog-${site.slice(0, 6)}" hidden>
       <label class="ed-field"><span>閲覧用パスワード（12文字以上を推奨）</span><input name="pw1" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
       <label class="ed-field"><span>もう一度</span><input name="pw2" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
       <label class="ed-check"><input type="checkbox" name="show"><span>パスワードを表示する</span></label>
@@ -362,14 +430,20 @@
         status.textContent = '鍵を作っています…';
         const kdf = newKdf();
         const { raw, key: k } = await deriveKey(pw1, kdf);
-        const site = randId(9);
         const m = { v: 2, site, kdf, macros: { '\\R': '\\mathbb{R}', '\\dd': '\\mathrm{d}' } };
+        m.check = await makeCheck(k, site);
         const idx = { posts: [] };
         status.textContent = '保存しています…';
         await commit('ブログを初期設定', [
           { path: 'data/meta.json', data: JSON.stringify(m) },
           { path: 'data/index.bin', data: await sealJSON(idx, k) },
         ]);
+        // 保存したものを GitHub から読み戻し，「もう一度」の欄の入力から改めて鍵を作って開けるか確かめる
+        status.textContent = '確かめています…';
+        const m2 = JSON.parse(td.decode(await ghRaw('data/meta.json')));
+        const d2 = await deriveKey(pw2, m2.kdf);
+        if (!(await checkKey(d2.key, m2))) throw new Error('保存したデータをパスワードで開けませんでした');
+        await unsealJSON(await ghRaw('data/index.bin'), d2.key);
         meta = m; key = k; index = idx;
         saveKey(raw, true);
         location.hash = '#/write';
@@ -445,7 +519,7 @@
   }
 
   const normRepo = (s) => s.trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$|\/$/g, '');
-  const apiErrorText = (e) => e.status === 401 ? 'トークンが無効か期限切れです。'
+  const apiErrorText = (e) => !e.status && /[ぁ-んァ-ン一-龠]/.test(e.message || '') ? e.message + '。' : e.status === 401 ? 'トークンが無効か期限切れです。'
     : e.status === 403 ? '権限が足りません。トークンの Contents が「Read and write」になっているか確認してください。'
       : e.status === 404 ? 'リポジトリが見つかりません。リポジトリ名と，トークンの対象リポジトリを確認してください。'
         : e.status === 409 || e.status === 422 ? '別の端末での更新と重なりました。もう一度保存してください。'
@@ -466,6 +540,12 @@
   }
   async function setOwnerPassword(pw) {
     if (!keyRaw) throw Object.assign(new Error('no view key'), { status: 0 });
+    // 今の閲覧用の鍵が，GitHub 上の最新のデータと合っているか確かめる（古い鍵を編集用に保存しないため）
+    const vk0 = await importRaw(b64(keyRaw));
+    const mNow = JSON.parse(td.decode(await ghRaw('data/meta.json')));
+    if (mNow.check ? !(await checkKey(vk0, mNow)) : !(await unsealJSON(await ghRaw('data/index.bin'), vk0).then(() => true, () => false))) {
+      throw Object.assign(new Error('閲覧用の鍵が古くなっています。いったん「閉じる」で出て，入り直してから設定してください'), { status: 0 });
+    }
     // 閲覧用パスワードと同じものは使えない
     const vd = await deriveKey(pw, meta.kdf);
     try { await unsealJSON(await ghRaw('data/index.bin'), vd.key); throw Object.assign(new Error('same'), { same: true }); } catch (e) { if (e.same) throw e; }
@@ -506,7 +586,7 @@
         try { changes.push({ path: `data/i-${id}.bin`, data: await seal(await unseal(await ghRaw(`data/i-${id}.bin`), key), nk) }); } catch (e) { if (e.status !== 404) throw e; }
       }
     }
-    const m = { ...meta, kdf };
+    const m = { ...meta, kdf, check: await makeCheck(nk, meta.site) };
     changes.push({ path: 'data/index.bin', data: await sealJSON(idx, nk) });
     changes.push({ path: 'data/meta.json', data: JSON.stringify(m) });
     progress('保存しています…');
@@ -558,7 +638,13 @@
     }
     const saved = loadKey();
     if (saved) {
-      try { const k = await importRaw(saved); index = await loadIndex(k); key = k; keyRaw = unb64(saved); } catch (e) { forgetKey(); }
+      try {
+        const k = await importRaw(saved);
+        if (meta.check && !(await checkKey(k))) throw new Error('old key');
+        index = meta.check ? await freshIndex(k) : await loadIndex(k);
+        key = k; keyRaw = unb64(saved);
+        upgradeMeta();
+      } catch (e) { if (!e.stale) forgetKey(); }
     }
     route();
   })();

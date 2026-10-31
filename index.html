@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#1e1e1e">
 <title>401のブログ</title>
 <link rel="stylesheet" href="katex/katex.min.css">
-<link rel="stylesheet" href="assets/style.css?v=15">
+<link rel="stylesheet" href="assets/style.css?v=16">
 </head>
 <body>
 <header class="site">
@@ -26,10 +26,11 @@
     <div class="panel-b">
       <form class="login" autocomplete="on">
         <p class="login-lead">パスワードを入力してください。</p>
-        <input type="text" name="username" value="blog" autocomplete="username" hidden>
+        <input type="text" name="username" value="" autocomplete="username" hidden>
         <label class="field"><span>パスワード</span>
           <input type="password" name="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" required autofocus>
         </label>
+        <label class="check"><input type="checkbox" name="show"><span>パスワードを表示する</span></label>
         <label class="check"><input type="checkbox" name="remember"><span>この端末で記憶する</span></label>
         <div class="login-actions"><button type="submit">開く</button></div>
         <p class="login-msg" role="alert"></p>
@@ -37,9 +38,9 @@
     </div>
   </section>
 </template>
-<script src="assets/markdown-it.min.js?v=15" defer></script>
-<script src="katex/katex.min.js?v=15" defer></script>
-<script src="assets/jlreq.js?v=15" defer></script>
-<script src="assets/app.js?v=15" defer></script>
+<script src="assets/markdown-it.min.js?v=16" defer></script>
+<script src="katex/katex.min.js?v=16" defer></script>
+<script src="assets/jlreq.js?v=16" defer></script>
+<script src="assets/app.js?v=16" defer></script>
 </body>
 </html>
